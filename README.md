@@ -2,7 +2,12 @@
 
 **Grammar debugging and manipulation toolkit for Claude Desktop**
 
+[![CI](https://github.com/natl-set/antlr4-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/natl-set/antlr4-mcp/actions/workflows/ci.yml)
+[![GitHub](https://img.shields.io/badge/github-natl--set%2Fantlr4--mcp-blue)](https://github.com/natl-set/antlr4-mcp)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 An MCP (Model Context Protocol) server that gives Claude AI the ability to read, analyze, modify, and debug ANTLR4 grammars. Perfect for working with complex parsers, fixing grammar issues, and understanding large multi-file grammars.
+
 
 [![GitHub](https://img.shields.io/badge/github-natl--set%2Fantlr4--mcp-blue)](https://github.com/natl-set/antlr4-mcp)
 
