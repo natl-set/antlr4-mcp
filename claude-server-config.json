@@ -1,0 +1,11 @@
+{
+  "name": "antlr4-mcp",
+  "description": "MCP server for ANTLR4 grammar analysis and authoring",
+  "type": "stdio",
+  "command": "node",
+  "args": [
+    "dist/index.js"
+  ],
+  "env": {},
+  "disabled": false
+}

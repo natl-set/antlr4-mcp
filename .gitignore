@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Build output
+dist/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Test artifacts
+*.test.js
+*.test.cjs
+
+# Temp files
+/tmp/
+*.tmp
+
+# MCP server logs
+antlr4-mcp.log
+
+# Agent rules
+.agent/
+
+# Generated grammars (examples only)
+*-generated.g4
+
+# Test scripts in root
+test-*.cjs
+test-*.mjs

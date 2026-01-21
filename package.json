@@ -1,0 +1,30 @@
+{
+  "name": "antlr4-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for ANTLR4 grammar analysis, validation, and authoring",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc && node dist/index.js",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "diff": "^8.0.3",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "keywords": [
+    "mcp",
+    "antlr4",
+    "grammar",
+    "parser"
+  ],
+  "author": "",
+  "license": "MIT"
+}
