@@ -989,6 +989,7 @@ Perfect for: Status reports, quick assessments, tracking changes over time.`,
     },
   },
   {
+    name: 'add-lexer-rules-removed',
 
     description: `Add multiple lexer rules to a grammar in a single operation (bulk add).
 
