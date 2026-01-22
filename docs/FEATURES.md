@@ -20,7 +20,7 @@ This document provides a comprehensive overview of all 21 tools available in the
 | 12 | rename-rule | Authoring | Rename rule and update references |
 | 13 | add-rules | Authoring (Bulk) | Add mixed parser/lexer rules |
 | 14 | add-parser-rules | Authoring (Bulk) | Add multiple parser rules |
-| 15 | (removed) |  | (add-lexer-rules merged into add-rules) |
+| 15 | (removed) |  | (add-lexer-rules merged into add-rules; use add-rules with output_mode: 'full'|'diff'|'none') |
 | 16 | find-rule-usages | Refactoring | Locate all rule usages |
 | 17 | rule-statistics | Refactoring | Analyze complexity & dependencies |
 | 18 | extract-fragment | Refactoring | Create reusable fragments |
