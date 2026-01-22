@@ -10,7 +10,7 @@
  * 4. analyze-ambiguities - Ambiguity detection
  */
 
-const { AntlrAnalyzer } = require('./dist/antlrAnalyzer.js');
+const { AntlrAnalyzer } = require('../dist/antlrAnalyzer.js');
 
 console.log('╔═══════════════════════════════════════════════════════════╗');
 console.log('║   DEMO: Four New ANTLR4-MCP Features                     ║');

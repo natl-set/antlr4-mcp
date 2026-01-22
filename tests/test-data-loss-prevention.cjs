@@ -6,7 +6,7 @@
  */
 
 const fs = require('fs');
-const { AntlrAnalyzer } = require('./dist/antlrAnalyzer.js');
+const { AntlrAnalyzer } = require('../dist/antlrAnalyzer.js');
 
 // Create a large test file
 const largeGrammar = `grammar TestGrammar;

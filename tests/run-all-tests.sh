@@ -13,7 +13,7 @@ run_test() {
     local name="$1"
     local file="$2"
     echo "Running: $name"
-    if node "$file" > /dev/null 2>&1; then
+    if node "tests/$file" > /dev/null 2>&1; then
         echo "  ✅ PASSED"
         passed=$((passed + 1))
     else
@@ -49,4 +49,3 @@ else
     echo ""
     exit 1
 fi
-test-smart-validation.cjs

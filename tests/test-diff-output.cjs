@@ -6,7 +6,7 @@
  * - Diff output: Returns git-style unified diff showing only changes
  */
 
-const { AntlrAnalyzer } = require('./dist/antlrAnalyzer.js');
+const { AntlrAnalyzer } = require('../dist/antlrAnalyzer.js');
 const Diff = require('diff');
 
 console.log('=== Diff Output Mode Tests ===\n');

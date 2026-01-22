@@ -14,7 +14,7 @@
  * 8. Complex real-world Palo Alto format
  */
 
-const { AntlrAnalyzer } = require('./dist/antlrAnalyzer.js');
+const { AntlrAnalyzer } = require('../dist/antlrAnalyzer.js');
 
 let passCount = 0;
 let failCount = 0;

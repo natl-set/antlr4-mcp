@@ -988,85 +988,10 @@ Perfect for: Status reports, quick assessments, tracking changes over time.`,
       required: ['grammar_content'],
     },
   },
-  {
-    name: 'add-lexer-rules',
-    description: `Add multiple lexer rules to a grammar in a single operation (bulk add).
 
-**When to use:** Set up initial grammar structure, add multiple related tokens at once, or import rules from another grammar.
-
-Example - Add common tokens:
-  rules: [
-    { name: "ID", pattern: "[a-zA-Z_][a-zA-Z0-9_]*" },
-    { name: "INT", pattern: "[0-9]+" },
-    { name: "WS", pattern: "[ \\\\t\\\\n\\\\r]+", skip: true },
-    { name: "COMMENT", pattern: "//.*?\\\\n", channel: "COMMENTS" }
-  ]
-  write_to_file: true
-
-Features:
-- All rules inserted in alphabetical order
-- Duplicate prevention per rule
-- Partial success: some rules can succeed even if others fail
-- Per-rule success/failure reporting
-- Atomic per-rule operations
-
-Returns:
-- Summary: "Added X rules, Y failed"
-- Per-rule results with success/failure status
-- Modified grammar
-- File write confirmation if applicable`,
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        grammar_content: {
-          type: 'string',
-          description: 'The ANTLR4 grammar file content',
-        },
-        from_file: {
-          type: 'string',
-          description: 'Optional: path to a grammar file to read. Required if using write_to_file.',
-        },
-        rules: {
-          type: 'array',
-          description:
-            'Array of lexer rules to add. Each rule requires name and pattern properties.',
-          items: {
-            type: 'object',
-            properties: {
-              name: {
-                type: 'string',
-                description: 'Rule name (must be UPPERCASE)',
-              },
-              pattern: {
-                type: 'string',
-                description: 'The lexer pattern (e.g., "[0-9]+", "[a-zA-Z]+")',
-              },
-              skip: {
-                type: 'boolean',
-                description: 'If true, adds "-> skip" directive',
-              },
-              channel: {
-                type: 'string',
-                description: 'Optional channel name (e.g., "COMMENTS")',
-              },
-              fragment: {
-                type: 'boolean',
-                description: 'If true, marks as fragment rule',
-              },
-            },
-            required: ['name', 'pattern'],
-          },
-        },
-        write_to_file: {
           type: 'boolean',
           description:
             'If true, writes modified grammar back to from_file (requires from_file to be set)',
-        },
-        output_mode: {
-          type: 'string',
-          enum: ['full', 'diff', 'none'],
-          description:
-            'Output mode: "full" returns complete grammar, "diff" returns git-style diff (default: diff), "none" returns no content',
         },
       },
       required: ['grammar_content', 'rules'],
@@ -1521,7 +1446,7 @@ Returns:
   - Confidence level
 - Summary of suggestions found
 
-Note: This tool only suggests tokens. Use add-lexer-rules to actually add them to your grammar.`,
+Note: This tool only suggests tokens. Use add-rules (lexer bulk) to actually add them to your grammar.`,
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -2282,7 +2207,7 @@ Tools: analyze-grammar ⭐, validate-grammar ⭐, list-rules, find-rule, format-
 ## ✏️ Authoring & Modification (11 tools)
 Add, remove, update, and rename rules with automatic sorting and duplicate prevention.
 
-Tools: add-lexer-rule, add-parser-rule, remove-rule, update-rule, rename-rule, add-lexer-rules, add-parser-rules, add-rules, add-tokens-with-template, generate-tokens-from-pattern, suggest-tokens-from-errors
+Tools: add-lexer-rule, add-parser-rule, remove-rule, update-rule, rename-rule, add-rules (lexer bulk), add-parser-rules, add-rules, add-tokens-with-template, generate-tokens-from-pattern, suggest-tokens-from-errors
 
 **When to use:** Creating new grammars, adding rules, modifying definitions, refactoring names, batch token generation.
 
@@ -2348,7 +2273,7 @@ Example: Analyze multi-file Batfish grammar
 4. **test-parser-rule** ⭐ - Quick validation without compilation
 5. **find-rule-usages** - Check where new rule is used
 
-For multiple rules: Use **add-lexer-rules**, **add-parser-rules**, or **add-rules** for bulk operations.
+For multiple rules: Use **add-rules (lexer bulk)**, **add-parser-rules**, or **add-rules** for bulk operations.
 
 ## 🔧 Workflow 3: Safe Rule Renaming
 1. **find-rule-usages** with load_imports: true - See all usages across imports
@@ -2507,7 +2432,7 @@ Example: Test multi-file parser rule
 
 ## Bulk Operations
 
-### add-lexer-rules
+### add-rules (lexer bulk)
 **Purpose:** Add multiple lexer rules at once
 **Features:** Partial success, per-rule reporting
 
@@ -2542,7 +2467,7 @@ Example: Test multi-file parser rule
 **Supports:** Batfish errors, ANTLR parse errors
 **Features:** Confidence scoring, automatic deduplication
 **Use when:** Debugging parser failures
-**Note:** Only suggests tokens - use add-lexer-rules to add them
+**Note:** Only suggests tokens - use add-rules (lexer bulk) to add them
 
 ---
 
@@ -2647,7 +2572,7 @@ Set this parameter to automatically save changes to the grammar file.`;
 ## Example 1: Creating a Simple Calculator Grammar
 
 Step 1 - Add lexer rules for tokens:
-  Tool: add-lexer-rules
+  Tool: add-rules (lexer bulk)
   rules: [
     { name: "PLUS", pattern: "'+'" },
     { name: "MINUS", pattern: "'-'" },
@@ -3167,11 +3092,8 @@ Note: The update-rule, add-lexer-rule, and add-parser-rule tools automatically p
                 fromFile || 'grammar.g4'
               );
               text = `✓ ${result.message}\n\n${diff}`;
-            } else if (outputMode === 'full') {
-              text = `✓ ${result.message}\n\nModified grammar:\n\n${result.modified}`;
             } else {
-              // 'none' - only success message
-              text = `✓ ${result.message}`;
+              text = `✓ ${result.message}\n\nModified grammar:\n\n${result.modified}`;
             }
           } else {
             text = `✗ ${result.message}`;
@@ -3211,10 +3133,8 @@ Note: The update-rule, add-lexer-rule, and add-parser-rule tools automatically p
                 fromFile || 'grammar.g4'
               );
               text = `✓ ${result.message}\n\n${diff}`;
-            } else if (outputMode === 'full') {
-              text = `✓ ${result.message}\n\nModified grammar:\n\n${result.modified}`;
             } else {
-              text = `✓ ${result.message}`;
+              text = `✓ ${result.message}\n\nModified grammar:\n\n${result.modified}`;
             }
           } else {
             text = `✗ ${result.message}`;
@@ -3255,10 +3175,8 @@ Note: The update-rule, add-lexer-rule, and add-parser-rule tools automatically p
                 fromFile || 'grammar.g4'
               );
               text = `✓ ${result.message}\n\n${diff}`;
-            } else if (outputMode === 'full') {
-              text = `✓ ${result.message}\n\nModified grammar:\n\n${result.modified}`;
             } else {
-              text = `✓ ${result.message}`;
+              text = `✓ ${result.message}\n\nModified grammar:\n\n${result.modified}`;
             }
           } else {
             text = `✗ ${result.message}`;
@@ -3299,10 +3217,8 @@ Note: The update-rule, add-lexer-rule, and add-parser-rule tools automatically p
                 fromFile || 'grammar.g4'
               );
               text = `✓ ${result.message}\n\n${diff}`;
-            } else if (outputMode === 'full') {
-              text = `✓ ${result.message}\n\nModified grammar:\n\n${result.modified}`;
             } else {
-              text = `✓ ${result.message}`;
+              text = `✓ ${result.message}\n\nModified grammar:\n\n${result.modified}`;
             }
           } else {
             text = `✗ ${result.message}`;
@@ -3472,6 +3388,63 @@ Note: The update-rule, add-lexer-rule, and add-parser-rule tools automatically p
           };
         }
 
+        case 'add-rules (lexer bulk)': {
+          const rules = argsObj.rules as Array<{
+            name: string;
+            pattern: string;
+            skip?: boolean;
+            channel?: string;
+            fragment?: boolean;
+          }>;
+          const writeToFile = (argsObj.write_to_file as boolean) || false;
+          const fromFile = (argsObj.from_file as string) || '';
+
+          if (!Array.isArray(rules)) {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: 'Error: rules must be an array',
+                } as TextContent,
+              ],
+              isError: true,
+            };
+          }
+
+          const result = AntlrAnalyzer.addLexerRules(
+            grammarContent,
+            rules.map((r) => ({
+              name: r.name,
+              pattern: r.pattern,
+              options: {
+                skip: r.skip,
+                channel: r.channel,
+                fragment: r.fragment,
+              },
+            }))
+          );
+
+          let output = `${result.summary}\n\nDetails:\n${result.results
+            .map((r) => `${r.success ? '✓' : '✗'} ${r.name}: ${r.message}`)
+            .join('\n')}\n\nModified grammar:\n${result.modified}`;
+
+          // Handle file writing with safety check
+          if (writeToFile && fromFile && result.success) {
+            const writeResult = safeWriteFile(fromFile, result.modified);
+            output += `
+
+${writeResult.message}`;
+          }
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: output,
+              } as TextContent,
+            ],
+          };
+        }
 
         case 'add-parser-rules': {
           const rules = argsObj.rules as Array<{
@@ -3506,20 +3479,6 @@ Note: The update-rule, add-lexer-rule, and add-parser-rule tools automatically p
           let output = `${result.summary}\n\nDetails:\n${result.results
             .map((r) => `${r.success ? '✓' : '✗'} ${r.name}: ${r.message}`)
             .join('\n')}\n\nModified grammar:\n${result.modified}`;
-
-          const outputMode = (argsObj.output_mode as string) || 'diff';
-          // Derive details portion by trimming the Modified grammar section
-          const details = output.split('\n\nModified grammar:\n')[0];
-
-          if (result.success) {
-            if (outputMode === 'diff') {
-              const diff = generateUnifiedDiff(grammarContent, result.modified, fromFile || 'grammar.g4');
-              output = `${details}\n\n${diff}`;
-            } else if (outputMode === 'none') {
-              output = details;
-            }
-            // else full: keep as-is
-          }
 
           // Handle file writing with safety check
           if (writeToFile && fromFile && result.success) {
@@ -3588,17 +3547,6 @@ ${writeResult.message}`;
           let output = `${result.summary}\n\nDetails:\n${result.results
             .map((r) => `${r.success ? '✓' : '✗'} ${r.name} (${r.type}): ${r.message}`)
             .join('\n')}\n\nModified grammar:\n${result.modified}`;
-
-          const outputMode = (argsObj.output_mode as string) || 'diff';
-          const details = output.split('\n\nModified grammar:\n')[0];
-          if (result.success) {
-            if (outputMode === 'diff') {
-              const diff = generateUnifiedDiff(grammarContent, result.modified, fromFile || 'grammar.g4');
-              output = `${details}\n\n${diff}`;
-            } else if (outputMode === 'none') {
-              output = details;
-            }
-          }
 
           // Handle file writing with safety check
           if (writeToFile && fromFile && result.success) {
@@ -3934,7 +3882,7 @@ ${writeResult.message}`;
             }
 
             output +=
-              '\nTo add these tokens, use the add-lexer-rules tool with the suggested names and patterns.';
+              '\nTo add these tokens, use the add-rules (lexer bulk) tool with the suggested names and patterns.';
           } else {
             output +=
               'No suggestions found. The error log may not contain recognizable token errors.';

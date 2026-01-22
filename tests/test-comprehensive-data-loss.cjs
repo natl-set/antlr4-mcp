@@ -9,7 +9,7 @@
  */
 
 const fs = require('fs');
-const { AntlrAnalyzer } = require('./dist/antlrAnalyzer.js');
+const { AntlrAnalyzer } = require('../dist/antlrAnalyzer.js');
 
 // Test counter
 let testsPassed = 0;

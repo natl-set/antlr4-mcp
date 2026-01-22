@@ -1062,12 +1062,6 @@ Returns:
           description:
             'If true, writes modified grammar back to from_file (requires from_file to be set)',
         },
-        output_mode: {
-          type: 'string',
-          enum: ['full', 'diff', 'none'],
-          description:
-            'Output mode: "full" returns complete grammar, "diff" returns git-style diff (default: diff), "none" returns no content',
-        },
       },
       required: ['grammar_content', 'rules'],
     },
@@ -3112,7 +3106,7 @@ Note: The update-rule, add-lexer-rule, and add-parser-rule tools automatically p
           const insertBefore = (argsObj.insert_before as string) || undefined;
           const writeToFile = (argsObj.write_to_file as boolean) || false;
           const fromFile = (argsObj.from_file as string) || '';
-          const outputMode = (argsObj.output_mode as string) || 'diff';
+          const outputMode = (argsObj.output_mode as string) || 'full';
 
           // Auto-detect rule type from naming convention
           const isLexerRule = ruleName.length > 0 && ruleName[0] === ruleName[0].toUpperCase();
@@ -3167,11 +3161,8 @@ Note: The update-rule, add-lexer-rule, and add-parser-rule tools automatically p
                 fromFile || 'grammar.g4'
               );
               text = `✓ ${result.message}\n\n${diff}`;
-            } else if (outputMode === 'full') {
-              text = `✓ ${result.message}\n\nModified grammar:\n\n${result.modified}`;
             } else {
-              // 'none' - only success message
-              text = `✓ ${result.message}`;
+              text = `✓ ${result.message}\n\nModified grammar:\n\n${result.modified}`;
             }
           } else {
             text = `✗ ${result.message}`;
@@ -3198,7 +3189,7 @@ Note: The update-rule, add-lexer-rule, and add-parser-rule tools automatically p
           const ruleName = (argsObj.rule_name as string) || '';
           const writeToFile = (argsObj.write_to_file as boolean) || false;
           const fromFile = (argsObj.from_file as string) || '';
-          const outputMode = (argsObj.output_mode as string) || 'diff';
+          const outputMode = (argsObj.output_mode as string) || 'full';
 
           const result = AntlrAnalyzer.removeRule(grammarContent, ruleName);
 
@@ -3211,10 +3202,8 @@ Note: The update-rule, add-lexer-rule, and add-parser-rule tools automatically p
                 fromFile || 'grammar.g4'
               );
               text = `✓ ${result.message}\n\n${diff}`;
-            } else if (outputMode === 'full') {
-              text = `✓ ${result.message}\n\nModified grammar:\n\n${result.modified}`;
             } else {
-              text = `✓ ${result.message}`;
+              text = `✓ ${result.message}\n\nModified grammar:\n\n${result.modified}`;
             }
           } else {
             text = `✗ ${result.message}`;
@@ -3242,7 +3231,7 @@ Note: The update-rule, add-lexer-rule, and add-parser-rule tools automatically p
           const newDefinition = (argsObj.new_definition as string) || '';
           const writeToFile = (argsObj.write_to_file as boolean) || false;
           const fromFile = (argsObj.from_file as string) || '';
-          const outputMode = (argsObj.output_mode as string) || 'diff';
+          const outputMode = (argsObj.output_mode as string) || 'full';
 
           const result = AntlrAnalyzer.updateRule(grammarContent, ruleName, newDefinition);
 
@@ -3255,10 +3244,8 @@ Note: The update-rule, add-lexer-rule, and add-parser-rule tools automatically p
                 fromFile || 'grammar.g4'
               );
               text = `✓ ${result.message}\n\n${diff}`;
-            } else if (outputMode === 'full') {
-              text = `✓ ${result.message}\n\nModified grammar:\n\n${result.modified}`;
             } else {
-              text = `✓ ${result.message}`;
+              text = `✓ ${result.message}\n\nModified grammar:\n\n${result.modified}`;
             }
           } else {
             text = `✗ ${result.message}`;
@@ -3286,7 +3273,7 @@ Note: The update-rule, add-lexer-rule, and add-parser-rule tools automatically p
           const newName = (argsObj.new_name as string) || '';
           const writeToFile = (argsObj.write_to_file as boolean) || false;
           const fromFile = (argsObj.from_file as string) || '';
-          const outputMode = (argsObj.output_mode as string) || 'diff';
+          const outputMode = (argsObj.output_mode as string) || 'full';
 
           const result = AntlrAnalyzer.renameRule(grammarContent, oldName, newName);
 
@@ -3299,10 +3286,8 @@ Note: The update-rule, add-lexer-rule, and add-parser-rule tools automatically p
                 fromFile || 'grammar.g4'
               );
               text = `✓ ${result.message}\n\n${diff}`;
-            } else if (outputMode === 'full') {
-              text = `✓ ${result.message}\n\nModified grammar:\n\n${result.modified}`;
             } else {
-              text = `✓ ${result.message}`;
+              text = `✓ ${result.message}\n\nModified grammar:\n\n${result.modified}`;
             }
           } else {
             text = `✗ ${result.message}`;
@@ -3472,6 +3457,63 @@ Note: The update-rule, add-lexer-rule, and add-parser-rule tools automatically p
           };
         }
 
+        case 'add-lexer-rules': {
+          const rules = argsObj.rules as Array<{
+            name: string;
+            pattern: string;
+            skip?: boolean;
+            channel?: string;
+            fragment?: boolean;
+          }>;
+          const writeToFile = (argsObj.write_to_file as boolean) || false;
+          const fromFile = (argsObj.from_file as string) || '';
+
+          if (!Array.isArray(rules)) {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: 'Error: rules must be an array',
+                } as TextContent,
+              ],
+              isError: true,
+            };
+          }
+
+          const result = AntlrAnalyzer.addLexerRules(
+            grammarContent,
+            rules.map((r) => ({
+              name: r.name,
+              pattern: r.pattern,
+              options: {
+                skip: r.skip,
+                channel: r.channel,
+                fragment: r.fragment,
+              },
+            }))
+          );
+
+          let output = `${result.summary}\n\nDetails:\n${result.results
+            .map((r) => `${r.success ? '✓' : '✗'} ${r.name}: ${r.message}`)
+            .join('\n')}\n\nModified grammar:\n${result.modified}`;
+
+          // Handle file writing with safety check
+          if (writeToFile && fromFile && result.success) {
+            const writeResult = safeWriteFile(fromFile, result.modified);
+            output += `
+
+${writeResult.message}`;
+          }
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: output,
+              } as TextContent,
+            ],
+          };
+        }
 
         case 'add-parser-rules': {
           const rules = argsObj.rules as Array<{
@@ -3506,20 +3548,6 @@ Note: The update-rule, add-lexer-rule, and add-parser-rule tools automatically p
           let output = `${result.summary}\n\nDetails:\n${result.results
             .map((r) => `${r.success ? '✓' : '✗'} ${r.name}: ${r.message}`)
             .join('\n')}\n\nModified grammar:\n${result.modified}`;
-
-          const outputMode = (argsObj.output_mode as string) || 'diff';
-          // Derive details portion by trimming the Modified grammar section
-          const details = output.split('\n\nModified grammar:\n')[0];
-
-          if (result.success) {
-            if (outputMode === 'diff') {
-              const diff = generateUnifiedDiff(grammarContent, result.modified, fromFile || 'grammar.g4');
-              output = `${details}\n\n${diff}`;
-            } else if (outputMode === 'none') {
-              output = details;
-            }
-            // else full: keep as-is
-          }
 
           // Handle file writing with safety check
           if (writeToFile && fromFile && result.success) {
@@ -3588,17 +3616,6 @@ ${writeResult.message}`;
           let output = `${result.summary}\n\nDetails:\n${result.results
             .map((r) => `${r.success ? '✓' : '✗'} ${r.name} (${r.type}): ${r.message}`)
             .join('\n')}\n\nModified grammar:\n${result.modified}`;
-
-          const outputMode = (argsObj.output_mode as string) || 'diff';
-          const details = output.split('\n\nModified grammar:\n')[0];
-          if (result.success) {
-            if (outputMode === 'diff') {
-              const diff = generateUnifiedDiff(grammarContent, result.modified, fromFile || 'grammar.g4');
-              output = `${details}\n\n${diff}`;
-            } else if (outputMode === 'none') {
-              output = details;
-            }
-          }
 
           // Handle file writing with safety check
           if (writeToFile && fromFile && result.success) {

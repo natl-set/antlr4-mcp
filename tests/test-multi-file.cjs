@@ -4,7 +4,7 @@
  * Test multi-file grammar support
  */
 
-const { AntlrAnalyzer } = require('./dist/antlrAnalyzer.js');
+const { AntlrAnalyzer } = require('../dist/antlrAnalyzer.js');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');

@@ -33,7 +33,7 @@ const updatedContent1 = fs.readFileSync(testFile, 'utf-8');
 console.log('\nUpdated file content:\n' + updatedContent1);
 
 // Add another rule using bulk operation
-console.log('\n=== Adding multiple lexer rules using add-lexer-rules ===');
+console.log('\n=== Adding multiple lexer rules using add-rules (lexer entries) ===');
 const result2 = AntlrAnalyzer.addLexerRules(updatedContent1, [
   { name: 'STRING', pattern: '".*?"' },
   { name: 'WS', pattern: '[ \\t\\n\\r]+', options: { skip: true } }

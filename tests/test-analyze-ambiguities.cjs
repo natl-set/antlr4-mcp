@@ -16,7 +16,7 @@
  * 10. Custom prefix length threshold
  */
 
-const { AntlrAnalyzer } = require('./dist/antlrAnalyzer.js');
+const { AntlrAnalyzer } = require('../dist/antlrAnalyzer.js');
 
 let passCount = 0;
 let failCount = 0;

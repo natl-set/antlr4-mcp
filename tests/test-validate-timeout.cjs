@@ -7,7 +7,7 @@
  * - Malformed grammars
  */
 
-const { AntlrAnalyzer } = require('./dist/antlrAnalyzer.js');
+const { AntlrAnalyzer } = require('../dist/antlrAnalyzer.js');
 
 console.log('=== validate-grammar Timeout Prevention Tests ===\n');
 

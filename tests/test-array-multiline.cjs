@@ -2,7 +2,7 @@
  * Test update-rule with array input for multi-line definitions
  */
 
-const { AntlrAnalyzer } = require('./dist/antlrAnalyzer.js');
+const { AntlrAnalyzer } = require('../dist/antlrAnalyzer.js');
 
 let passed = 0;
 let failed = 0;

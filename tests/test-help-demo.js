@@ -46,7 +46,7 @@ console.log('   - compare-grammars\n');
 console.log('✏️  Authoring & Modification (11 tools) 👈 NEW TOOLS HERE!');
 console.log('   - add-lexer-rule, add-parser-rule, remove-rule');
 console.log('   - update-rule, rename-rule');
-console.log('   - add-lexer-rules, add-parser-rules, add-rules');
+console.log('   - add-rules (lexer bulk), add-parser-rules, add-rules (mixed)');
 console.log('   - add-tokens-with-template ⭐ NEW');
 console.log('   - generate-tokens-from-pattern ⭐ NEW');
 console.log('   - suggest-tokens-from-errors ⭐ NEW\n');

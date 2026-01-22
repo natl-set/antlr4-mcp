@@ -1,0 +1,6 @@
+dist/
+node_modules/
+*.md
+*.g4
+*.json
+package-lock.json

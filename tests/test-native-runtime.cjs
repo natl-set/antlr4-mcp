@@ -5,7 +5,7 @@
  * Falls back gracefully if ANTLR4 is not installed.
  */
 
-const { Antlr4Runtime } = require('./dist/antlr4Runtime.js');
+const { Antlr4Runtime } = require('../dist/antlr4Runtime.js');
 
 console.log('=== Native ANTLR4 Runtime Test ===\n');
 

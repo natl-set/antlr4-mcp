@@ -6,7 +6,7 @@
  * - validate-grammar with max_issues parameter
  */
 
-const { AntlrAnalyzer } = require('./dist/antlrAnalyzer.js');
+const { AntlrAnalyzer } = require('../dist/antlrAnalyzer.js');
 const fs = require('fs');
 
 console.log('=== Output Limiting Feature Tests ===\n');

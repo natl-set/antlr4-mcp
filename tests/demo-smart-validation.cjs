@@ -4,7 +4,7 @@
  * Shows how the new tools solve real-world problems
  */
 
-const { AntlrAnalyzer } = require('./dist/antlrAnalyzer.js');
+const { AntlrAnalyzer } = require('../dist/antlrAnalyzer.js');
 
 // Realistic grammar with the issues found in Palo Alto grammar
 const REALISTIC_GRAMMAR = `

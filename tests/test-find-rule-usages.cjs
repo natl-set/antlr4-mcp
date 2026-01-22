@@ -5,7 +5,7 @@
 // Clear require cache
 delete require.cache[require.resolve('./dist/antlrAnalyzer.js')];
 
-const { AntlrAnalyzer } = require('./dist/antlrAnalyzer.js');
+const { AntlrAnalyzer } = require('../dist/antlrAnalyzer.js');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');

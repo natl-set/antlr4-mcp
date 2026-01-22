@@ -4,7 +4,7 @@
  * Tests aggregation, quantifier detection, and incomplete parsing detection
  */
 
-const { AntlrAnalyzer } = require('./dist/antlrAnalyzer.js');
+const { AntlrAnalyzer } = require('../dist/antlrAnalyzer.js');
 
 const TEST_GRAMMAR = `
 grammar TestGrammar;

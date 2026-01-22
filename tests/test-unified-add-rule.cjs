@@ -5,7 +5,7 @@
  * from naming convention (UPPERCASE = lexer, lowercase = parser)
  */
 
-const { AntlrAnalyzer } = require('./dist/antlrAnalyzer.js');
+const { AntlrAnalyzer } = require('../dist/antlrAnalyzer.js');
 
 console.log('=== Unified add-rule Tests ===\n');
 

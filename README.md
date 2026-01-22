@@ -2,6 +2,10 @@
 
 **Grammar debugging and manipulation toolkit for Claude Desktop**
 
+
+[![CI](https://github.com/natl-set/antlr4-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/natl-set/antlr4-mcp/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 [![CI](https://github.com/natl-set/antlr4-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/natl-set/antlr4-mcp/actions/workflows/ci.yml)
 [![GitHub](https://img.shields.io/badge/github-natl--set%2Fantlr4--mcp-blue)](https://github.com/natl-set/antlr4-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
