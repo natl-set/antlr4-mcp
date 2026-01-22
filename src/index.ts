@@ -989,7 +989,7 @@ Perfect for: Status reports, quick assessments, tracking changes over time.`,
     },
   },
   {
-    name: 'add-lexer-rules',
+
     description: `Add multiple lexer rules to a grammar in a single operation (bulk add).
 
 **When to use:** Set up initial grammar structure, add multiple related tokens at once, or import rules from another grammar.
@@ -2507,7 +2507,7 @@ Example: Test multi-file parser rule
 
 ## Bulk Operations
 
-### add-lexer-rules
+### (removed) add-lexer-rules — merged into add-rules
 **Purpose:** Add multiple lexer rules at once
 **Features:** Partial success, per-rule reporting
 
@@ -2542,7 +2542,7 @@ Example: Test multi-file parser rule
 **Supports:** Batfish errors, ANTLR parse errors
 **Features:** Confidence scoring, automatic deduplication
 **Use when:** Debugging parser failures
-**Note:** Only suggests tokens - use add-lexer-rules to add them
+**Note:** Only suggests tokens - use add-rules to add them (add-lexer-rules merged into add-rules)
 
 ---
 
@@ -2647,7 +2647,7 @@ Set this parameter to automatically save changes to the grammar file.`;
 ## Example 1: Creating a Simple Calculator Grammar
 
 Step 1 - Add lexer rules for tokens:
-  Tool: add-lexer-rules
+  Tool: add-rules (add-lexer-rules merged)
   rules: [
     { name: "PLUS", pattern: "'+'" },
     { name: "MINUS", pattern: "'-'" },
@@ -3934,7 +3934,7 @@ ${writeResult.message}`;
             }
 
             output +=
-              '\nTo add these tokens, use the add-lexer-rules tool with the suggested names and patterns.';
+              '\nTo add these tokens, use the add-rules tool with the suggested names and patterns.';
           } else {
             output +=
               'No suggestions found. The error log may not contain recognizable token errors.';

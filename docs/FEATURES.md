@@ -205,7 +205,7 @@ Refactor rule names with automatic reference updates throughout grammar.
 
 ---
 
-### 13. **add-lexer-rules** ⭐ BULK OPERATION + FILE PERSISTENCE
+### 13. **add-rules** ⭐ BULK OPERATION + FILE PERSISTENCE (merged)
 Add multiple lexer rules in bulk with alphabetical sorting.
 
 **Parameters:**
