@@ -1305,12 +1305,16 @@ export class AntlrAnalyzer {
     const modifiedFiles: Array<{ filePath: string; content: string; refCount: number }> = [];
     let totalRefCount = 0;
 
+    // Escape special regex characters to prevent ReDoS or unexpected behavior
+    const escapeRegExp = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escapedOldName = escapeRegExp(oldName);
+
     // Process each file
-    for (const [filePath, analysis] of cache) {
+    for (const filePath of cache.keys()) {
       const content = fs.readFileSync(filePath, 'utf-8');
 
       // Check if this file contains the rule (as definition or reference)
-      const regex = new RegExp(`\\b${oldName}\\b`, 'g');
+      const regex = new RegExp(`\\b${escapedOldName}\\b`, 'g');
       const matches = content.match(regex);
 
       if (!matches || matches.length === 0) {

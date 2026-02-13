@@ -3145,12 +3145,24 @@ Note: The update-rule, add-lexer-rule, and add-parser-rule tools automatically p
 
           // Fallback: read from from_file if grammarContent is empty
           let effectiveContent = grammarContent;
+          let readError: string | null = null;
           if ((!effectiveContent || effectiveContent.trim() === '') && fromFile) {
             try {
               effectiveContent = fs.readFileSync(fromFile, 'utf-8');
-            } catch {
-              // Will fail later with appropriate error
+            } catch (err) {
+              readError = err instanceof Error ? err.message : String(err);
             }
+          }
+
+          // Return error if we couldn't get content
+          if (!effectiveContent || effectiveContent.trim() === '') {
+            const errorMsg = readError
+              ? `✗ Failed to read grammar file '${fromFile}': ${readError}`
+              : `✗ No grammar content provided. Use grammar_content or from_file parameter.`;
+            return {
+              content: [{ type: 'text', text: errorMsg } as TextContent],
+              isError: true,
+            };
           }
 
           let result;
