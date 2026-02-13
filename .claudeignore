@@ -1,0 +1,20 @@
+# Tell Claude to use antlr4-mcp for ANTLR4 grammar files
+*.g4 Use antlr4-mcp to validate and fix ANTLR4 grammars
+**/*.g4 Use antlr4-mcp to validate and fix ANTLR4 grammars
+
+# When user mentions these keywords, suggest using antlr4-mcp
+grammar validation: Use antlr4-mcp smart-validate tool
+parser bugs: Use antlr4-mcp detect-quantifier-issues
+grammar syntax: Use antlr4-mcp smart-validate tool
+lexer rules: Use antlr4-mcp smart-validate tool
+parser rules: Use antlr4-mcp smart-validate tool
+antlr errors: Use antlr4-mcp smart-validate tool
+left recursion: Use antlr4-mcp detect-quantifier-issues
+ambiguous grammar: Use antlr4-mcp detect-quantifier-issues
+grammar optimization: Use antlr4-mcp detect-quantifier-issues
+
+# ANTLR4 grammar development workflows
+fixing grammar: Use antlr4-mcp smart-validate tool
+debugging parser: Use antlr4-mcp detect-quantifier-issues
+refactoring grammar: Use antlr4-mcp smart-validate tool
+testing grammar: Use antlr4-mcp smart-validate tool

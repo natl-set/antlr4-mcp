@@ -2257,8 +2257,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         !isPlaceholder
       ) {
         grammarContent = grammarContentStr;
+        console.error(`[ANTLR4-MCP] Using grammar_content (${grammarContent.length} chars)`);
       } else if (argsObj.from_file && typeof argsObj.from_file === 'string') {
-        grammarContent = fs.readFileSync(argsObj.from_file, 'utf-8');
+        try {
+          grammarContent = fs.readFileSync(argsObj.from_file, 'utf-8');
+          console.error(`[ANTLR4-MCP] Read from file: ${argsObj.from_file} (${grammarContent.length} chars)`);
+        } catch (readError) {
+          console.error(`[ANTLR4-MCP] Failed to read file: ${argsObj.from_file}`, readError);
+        }
+      } else {
+        console.error(`[ANTLR4-MCP] No grammar content available. grammar_content: "${grammarContentStr}", from_file: "${argsObj.from_file}"`);
       }
 
       // Read grammar 2 (for compare-grammars) - prioritize from_file2 if grammar2_content is empty or placeholder
@@ -3135,6 +3143,16 @@ Note: The update-rule, add-lexer-rule, and add-parser-rule tools automatically p
           // Auto-detect rule type from naming convention
           const isLexerRule = ruleName.length > 0 && ruleName[0] === ruleName[0].toUpperCase();
 
+          // Fallback: read from from_file if grammarContent is empty
+          let effectiveContent = grammarContent;
+          if ((!effectiveContent || effectiveContent.trim() === '') && fromFile) {
+            try {
+              effectiveContent = fs.readFileSync(fromFile, 'utf-8');
+            } catch {
+              // Will fail later with appropriate error
+            }
+          }
+
           let result;
           if (isLexerRule) {
             // Lexer rule
@@ -3149,7 +3167,7 @@ Note: The update-rule, add-lexer-rule, and add-parser-rule tools automatically p
                 isError: true,
               };
             }
-            result = AntlrAnalyzer.addLexerRule(grammarContent, ruleName, pattern, {
+            result = AntlrAnalyzer.addLexerRule(effectiveContent, ruleName, pattern, {
               skip,
               channel,
               fragment,
@@ -3169,7 +3187,7 @@ Note: The update-rule, add-lexer-rule, and add-parser-rule tools automatically p
                 isError: true,
               };
             }
-            result = AntlrAnalyzer.addParserRule(grammarContent, ruleName, definition, {
+            result = AntlrAnalyzer.addParserRule(effectiveContent, ruleName, definition, {
               returnType,
               insertAfter,
               insertBefore,
