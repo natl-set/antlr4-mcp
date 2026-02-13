@@ -347,7 +347,7 @@ export class AntlrAnalyzer {
   /**
    * Validate grammar and return issues
    */
-  private static validateGrammar(grammar: GrammarAnalysis): GrammarIssue[] {
+  static validateGrammar(grammar: GrammarAnalysis): GrammarIssue[] {
     const issues: GrammarIssue[] = [];
 
     if (!grammar.grammarName) {
@@ -1236,6 +1236,104 @@ export class AntlrAnalyzer {
       modified,
       message: `Renamed rule '${oldName}' to '${newName}' (${refCount} references updated).`,
       refCount,
+    };
+  }
+
+  /**
+   * Rename a rule across multiple grammar files (main + imports)
+   */
+  static renameRuleMultiFile(
+    filePath: string,
+    oldName: string,
+    newName: string,
+    basePath?: string
+  ): {
+    success: boolean;
+    modifiedFiles: Array<{ filePath: string; content: string; refCount: number }>;
+    message: string;
+    totalRefCount: number;
+  } {
+    const normalizedPath = path.resolve(filePath);
+    const cache = new Map<string, GrammarAnalysis>();
+    const visited = new Set<string>();
+
+    // Load main grammar
+    const mainAnalysis = this.loadGrammarWithImports(normalizedPath, basePath, cache, visited);
+
+    // Validate new name
+    const isLexer = /^[A-Z_]/.test(oldName);
+    const namePattern = isLexer ? /^[A-Z_][A-Z0-9_]*$/ : /^[a-z_][a-z0-9_]*$/;
+    if (!namePattern.test(newName)) {
+      return {
+        success: false,
+        modifiedFiles: [],
+        message: `Invalid new rule name: '${newName}'.`,
+        totalRefCount: 0,
+      };
+    }
+
+    // Check if old rule exists in any file
+    let ruleDefFile: string | null = null;
+    for (const [filePath, analysis] of cache) {
+      if (analysis.rules.some((r) => r.name === oldName)) {
+        ruleDefFile = filePath;
+        break;
+      }
+    }
+
+    if (!ruleDefFile) {
+      return {
+        success: false,
+        modifiedFiles: [],
+        message: `Rule '${oldName}' not found in any grammar file.`,
+        totalRefCount: 0,
+      };
+    }
+
+    // Check if new name already exists in any file
+    for (const [, analysis] of cache) {
+      if (analysis.rules.some((r) => r.name === newName)) {
+        return {
+          success: false,
+          modifiedFiles: [],
+          message: `Rule '${newName}' already exists in grammar files.`,
+          totalRefCount: 0,
+        };
+      }
+    }
+
+    const modifiedFiles: Array<{ filePath: string; content: string; refCount: number }> = [];
+    let totalRefCount = 0;
+
+    // Process each file
+    for (const [filePath, analysis] of cache) {
+      const content = fs.readFileSync(filePath, 'utf-8');
+
+      // Check if this file contains the rule (as definition or reference)
+      const regex = new RegExp(`\\b${oldName}\\b`, 'g');
+      const matches = content.match(regex);
+
+      if (!matches || matches.length === 0) {
+        continue; // Skip files that don't contain this rule
+      }
+
+      // Perform replacement in this file
+      const modified = content.replace(regex, newName);
+      const refCount = matches.length - (filePath === ruleDefFile ? 1 : 0); // -1 for definition
+      totalRefCount += matches.length;
+
+      modifiedFiles.push({
+        filePath,
+        content: modified,
+        refCount: matches.length,
+      });
+    }
+
+    return {
+      success: true,
+      modifiedFiles,
+      message: `Renamed rule '${oldName}' to '${newName}' in ${modifiedFiles.length} file(s) (${totalRefCount} occurrences updated).`,
+      totalRefCount,
     };
   }
 
@@ -4519,6 +4617,17 @@ export class AntlrAnalyzer {
 
     // Merge analyses
     const mergedAnalysis = this.mergeAnalyses(mainAnalysis, importedAnalyses);
+
+    // Re-run validation on merged result to properly check rule references
+    // This fixes the issue where validation ran before imports were merged
+    const importResolutionIssues = mergedAnalysis.issues.filter(
+      (issue) =>
+        issue.message.includes('Cannot resolve import') ||
+        issue.message.includes('Cannot resolve tokenVocab') ||
+        issue.message.includes('Circular import') ||
+        issue.message.includes('Failed to read file')
+    );
+    mergedAnalysis.issues = [...importResolutionIssues, ...this.validateGrammar(mergedAnalysis)];
 
     // Cache result
     cache.set(normalizedPath, mergedAnalysis);

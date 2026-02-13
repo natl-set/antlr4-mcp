@@ -13,6 +13,7 @@ import {
 import { AntlrAnalyzer } from './antlrAnalyzer.js';
 import { getRuntime } from './antlr4Runtime.js';
 import * as fs from 'fs';
+import * as path from 'path';
 import express from 'express';
 import * as Diff from 'diff';
 
@@ -684,15 +685,22 @@ Example usage:
   new_name: "expression"
   write_to_file: true
 
+Multi-file example:
+  from_file: "MyGrammar.g4"
+  base_path: "/path/to/grammars"
+  load_imports: true
+  write_to_file: true
+
 Features:
 - Uses whole-word matching (prevents "expr" from matching "subexpr")
 - Updates rule definition and ALL references in other rules
 - Preserves rule position in grammar
 - Reports number of references updated
+- Multi-file support: Set load_imports=true to rename across imported grammars
 
 Recommended workflow:
-1. find-rule-usages to see impact
-2. rename-rule to perform refactoring
+1. find-rule-usages with load_imports=true to see full impact
+2. rename-rule with load_imports=true to perform refactoring
 3. validate-grammar to verify correctness
 
 Returns: Modified grammar with rule and all references renamed, update count, file write confirmation if applicable.`,
@@ -701,11 +709,11 @@ Returns: Modified grammar with rule and all references renamed, update count, fi
       properties: {
         grammar_content: {
           type: 'string',
-          description: 'The ANTLR4 grammar file content',
+          description: 'The ANTLR4 grammar file content (ignored if from_file and load_imports are set)',
         },
         from_file: {
           type: 'string',
-          description: 'Optional: path to a grammar file to read. Required if using write_to_file.',
+          description: 'Optional: path to a grammar file to read. Required if using write_to_file or load_imports.',
         },
         old_name: {
           type: 'string',
@@ -716,10 +724,19 @@ Returns: Modified grammar with rule and all references renamed, update count, fi
           description:
             'New name for the rule (must follow ANTLR4 naming: uppercase for lexer, lowercase for parser)',
         },
+        base_path: {
+          type: 'string',
+          description: 'Optional: base directory for resolving imports. Required for multi-file grammars.',
+        },
+        load_imports: {
+          type: 'boolean',
+          description:
+            'If true, loads all imported grammar files and renames the rule across all files. Requires from_file to be set.',
+        },
         write_to_file: {
           type: 'boolean',
           description:
-            'If true, writes modified grammar back to from_file (requires from_file to be set)',
+            'If true, writes modified grammar back to from_file (and all imported files if load_imports is true)',
         },
         output_mode: {
           type: 'string',
@@ -728,7 +745,7 @@ Returns: Modified grammar with rule and all references renamed, update count, fi
             'Output format: "full" returns entire modified grammar, "diff" returns git-style unified diff (default for modification tools), "none" returns no content (useful for write-only operations)',
         },
       },
-      required: ['grammar_content', 'old_name', 'new_name'],
+      required: ['old_name', 'new_name'],
     },
   },
   {
@@ -3287,8 +3304,75 @@ Note: The update-rule, add-lexer-rule, and add-parser-rule tools automatically p
           const newName = (argsObj.new_name as string) || '';
           const writeToFile = (argsObj.write_to_file as boolean) || false;
           const fromFile = (argsObj.from_file as string) || '';
+          const basePath = (argsObj.base_path as string) || undefined;
+          const loadImports = (argsObj.load_imports as boolean) || false;
           const outputMode = (argsObj.output_mode as string) || 'diff';
 
+          // Use multi-file rename if requested
+          if (loadImports) {
+            if (!fromFile) {
+              return {
+                content: [
+                  {
+                    type: 'text',
+                    text: '✗ load_imports requires from_file to be specified.',
+                  } as TextContent,
+                ],
+                isError: true,
+              };
+            }
+
+            const result = AntlrAnalyzer.renameRuleMultiFile(fromFile, oldName, newName, basePath);
+
+            let text = '';
+            if (result.success) {
+              text = `✓ ${result.message}\n\n`;
+
+              // Show per-file breakdown
+              for (const mod of result.modifiedFiles) {
+                const relativePath = basePath ? path.relative(basePath, mod.filePath) : mod.filePath;
+                text += `📄 ${relativePath}: ${mod.refCount} occurrence(s)\n`;
+              }
+
+              // Show diffs if requested
+              if (outputMode !== 'none') {
+                for (const mod of result.modifiedFiles) {
+                  const originalContent = fs.readFileSync(mod.filePath, 'utf-8');
+                  const relativePath = basePath ? path.relative(basePath, mod.filePath) : mod.filePath;
+
+                  if (outputMode === 'diff') {
+                    const diff = generateUnifiedDiff(originalContent, mod.content, relativePath);
+                    text += `\n${diff}\n`;
+                  } else if (outputMode === 'full') {
+                    text += `\n--- ${relativePath} ---\n${mod.content}\n`;
+                  }
+                }
+              }
+
+              // Handle file writing
+              if (writeToFile) {
+                for (const mod of result.modifiedFiles) {
+                  const writeResult = safeWriteFile(mod.filePath, mod.content);
+                  const relativePath = basePath ? path.relative(basePath, mod.filePath) : mod.filePath;
+                  text += `\n${writeResult.message} (${relativePath})`;
+                }
+              }
+            } else {
+              text = `✗ ${result.message}`;
+            }
+
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text,
+                } as TextContent,
+              ],
+              isError: !result.success,
+            };
+          }
+
+          // Single-file rename (original behavior)
           const result = AntlrAnalyzer.renameRule(grammarContent, oldName, newName);
 
           let text = '';
@@ -4845,6 +4929,15 @@ async function main() {
     app.get('/sse', async (req, res) => {
       transport = new SSEServerTransport('/messages', res);
       await server.connect(transport);
+
+      // Display startup message
+      console.error('\n🎯 antlr4-mcp v1.0.0 loaded with 29+ tools!');
+      console.error('📚 Key capabilities:');
+      console.error('  • Smart validation - Aggregate 17,000+ warnings into actionable items');
+      console.error('  • Quantifier detection - Find ? that should be *');
+      console.error('  • Multi-file analysis - Track imports across grammar files');
+      console.error('  • Safe editing - Diff mode, no data loss');
+      console.error('\n💡 Tip: Ask for "help" tool to see all capabilities!\n');
     });
 
     app.post('/messages', async (req, res) => {
@@ -4862,6 +4955,16 @@ async function main() {
     // Stdio Mode (Default)
     const transport = new StdioServerTransport();
     await server.connect(transport);
+
+    // Display startup message
+    console.error('\n🎯 antlr4-mcp v1.0.0 loaded with 29+ tools!');
+    console.error('📚 Key capabilities:');
+    console.error('  • Smart validation - Aggregate 17,000+ warnings into actionable items');
+    console.error('  • Quantifier detection - Find ? that should be *');
+    console.error('  • Multi-file analysis - Track imports across grammar files');
+    console.error('  • Safe editing - Diff mode, no data loss');
+    console.error('\n💡 Tip: Ask for "help" tool to see all capabilities!\n');
+
     console.error('ANTLR4 MCP Server started (stdio)');
   }
 }

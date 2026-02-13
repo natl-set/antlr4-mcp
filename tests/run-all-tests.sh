@@ -29,6 +29,7 @@ run_test "Data Loss Prevention (Comprehensive)" "test-comprehensive-data-loss.cj
 run_test "Timeout Prevention" "test-validate-timeout.cjs"
 run_test "Output Limiting Features" "test-output-limiting.cjs"
 run_test "Diff Output Mode" "test-diff-output.cjs"
+run_test "Multi-File Rename" "multi-file-rename/test-multifile-rename.cjs"
 
 echo "========================================"
 echo "  Test Summary"
