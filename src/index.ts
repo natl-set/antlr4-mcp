@@ -2335,11 +2335,12 @@ Tools: export-as-markdown, generate-summary
 
 ---
 
-**🚀 NEW FEATURES (v2.1):**
-- Multi-file grammar support (imports + tokenVocab resolution)
+**🚀 NEW FEATURES (v2.2):**
+- **tokenVocab fix**: validate-grammar now correctly resolves lexer tokens from tokenVocab
+- **Multi-file rename**: rename-rule supports load_imports for cross-file renaming
+- **from_file fallback**: Tools automatically read from from_file when grammar_content is empty
 - move-rule: Reposition rules before/after other rules
 - Enhanced find-rule-usages: Context info + multi-file search
-- 95.8% test coverage across 119 tests
 
 **💡 QUICK START:** When exploring an unfamiliar grammar, start with:
 1. analyze-grammar - Get complete structure (use load_imports: true for multi-file)
@@ -2376,11 +2377,11 @@ Example: Analyze multi-file Batfish grammar
 
 For multiple rules: Use **add-lexer-rules**, **add-parser-rules**, or **add-rules** for bulk operations.
 
-## 🔧 Workflow 3: Safe Rule Renaming
+## 🔧 Workflow 3: Safe Rule Renaming (Multi-File Support!)
 1. **find-rule-usages** with load_imports: true - See all usages across imports
 2. **rule-statistics** - Analyze complexity and dependencies
-3. **rename-rule** with write_to_file: true - Perform refactoring (updates all references)
-4. **validate-grammar** - Verify no issues introduced
+3. **rename-rule** with load_imports: true and write_to_file: true - Rename across all files
+4. **validate-grammar** with load_imports: true - Verify no issues introduced
 
 Example: Rename "expr" to "expression"
   find-rule-usages: rule_name="expr", load_imports=true
@@ -2427,10 +2428,11 @@ Example: Test multi-file parser rule
 ## 🚀 Workflow 8: Multi-File Grammar Management
 1. **analyze-grammar** with load_imports: true - Get complete view
 2. **find-rule-usages** with load_imports: true - Track cross-file dependencies
-3. **validate-grammar** with load_imports: true - Eliminate false positives
+3. **validate-grammar** with load_imports: true - Validate with lexer imports (tokenVocab resolved)
 4. **test-parser-rule** with load_imports: true - Test with full context
+5. **rename-rule** with load_imports: true - Rename across all imported files
 
-**New in v2.1:** All major tools now support load_imports parameter!
+**New in v2.2:** tokenVocab lexer tokens are correctly resolved during validation!
 
 ---
 
@@ -2448,7 +2450,9 @@ Example: Test multi-file parser rule
 ## validate-grammar
 **Purpose:** Detect syntax issues and problems
 **Detects:** Undefined rules, unused rules, left recursion, naming violations
+**Multi-file:** Use load_imports: true to validate with lexer imports (tokenVocab)
 **Use when:** After making changes, or diagnosing problems
+**Note:** With load_imports=true, lexer tokens from tokenVocab are correctly resolved
 
 ## analyze-ambiguities ⭐ NEW
 **Purpose:** Static analysis for common ANTLR4 ambiguity patterns
@@ -2525,11 +2529,12 @@ Example: Test multi-file parser rule
 
 ### rename-rule
 **Purpose:** Rename rule and ALL references safely
-**Features:** Whole-word matching, complete reference tracking
+**Features:** Whole-word matching, complete reference tracking, multi-file support
+**Multi-file:** Use load_imports: true to rename across imported grammars
 **Recommended workflow:**
-  1. find-rule-usages (check impact)
-  2. rename-rule (perform refactoring)
-  3. validate-grammar (verify)
+  1. find-rule-usages with load_imports=true (check full impact)
+  2. rename-rule with load_imports=true (perform refactoring)
+  3. validate-grammar with load_imports=true (verify)
 
 ## Bulk Operations
 
