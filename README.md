@@ -214,6 +214,7 @@ await use_mcp_tool("antlr4", "preview-tokens", {
 - **analyze-bottlenecks** - Detect high-branching rules, tilde negation, missing modes
 - **benchmark-parsing** - Simulated benchmark (quick estimate)
 - **native-benchmark** - Real ANTLR4 Java runtime benchmark (accurate)
+- **profile-parsing** - Detailed parse metrics (ambiguities, tree depth, rule frequency)
 
 ### Phase 1 Analysis
 
