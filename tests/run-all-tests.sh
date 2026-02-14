@@ -31,6 +31,7 @@ run_test "Output Limiting Features" "test-output-limiting.cjs"
 run_test "Diff Output Mode" "test-diff-output.cjs"
 run_test "Multi-File Rename" "multi-file-rename/test-multifile-rename.cjs"
 run_test "Lexer Modes" "test-lexer-modes.cjs"
+run_test "Analysis Tools" "test-analysis-tools.cjs"
 
 echo "========================================"
 echo "  Test Summary"

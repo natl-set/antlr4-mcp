@@ -2720,6 +2720,635 @@ export class AntlrAnalyzer {
     };
   }
 
+  /**
+   * Calculate comprehensive grammar metrics including branching estimation
+   */
+  static calculateGrammarMetrics(grammarContent: string): {
+    size: {
+      totalRules: number;
+      parserRules: number;
+      lexerRules: number;
+      fragments: number;
+      totalLines: number;
+      avgRuleLength: number;
+    };
+    branching: {
+      avgAlternatives: number;
+      maxAlternatives: number;
+      avgBranchingDepth: number;
+      maxBranchingDepth: number;
+      branchingDistribution: Record<string, number>;
+      rulesWithMostBranching: Array<{ name: string; alternatives: number; depth: number }>;
+    };
+    complexity: {
+      avgCyclomaticComplexity: number;
+      maxCyclomaticComplexity: number;
+      totalCyclomaticComplexity: number;
+      recursiveRules: string[];
+      estimatedParseComplexity: 'low' | 'medium' | 'high' | 'very-high';
+    };
+    dependencies: {
+      avgFanIn: number;
+      avgFanOut: number;
+      orphanRules: string[];
+      hubRules: string[];
+      mostReferenced: Array<{ name: string; count: number }>;
+    };
+  } {
+    const analysis = this.analyze(grammarContent);
+    const lines = grammarContent.split('\n');
+
+    const parserRules = analysis.rules.filter(r => r.type === 'parser');
+    const lexerRules = analysis.rules.filter(r => r.type === 'lexer');
+    const fragments = lexerRules.filter(r => r.definition.startsWith('fragment'));
+
+    // Calculate branching metrics
+    const branchingData: Array<{ name: string; alternatives: number; depth: number }> = [];
+
+    for (const rule of parserRules) {
+      const def = rule.definition;
+      // Count alternatives (split by | outside of parentheses)
+      const alternatives = this.countAlternatives(def);
+      // Count branching depth (max nesting of subrules)
+      const depth = this.countBranchingDepth(def);
+      branchingData.push({ name: rule.name, alternatives, depth });
+    }
+
+    const avgAlternatives = branchingData.length > 0
+      ? branchingData.reduce((sum, b) => sum + b.alternatives, 0) / branchingData.length
+      : 0;
+    const maxAlternatives = Math.max(...branchingData.map(b => b.alternatives), 1);
+    const avgBranchingDepth = branchingData.length > 0
+      ? branchingData.reduce((sum, b) => sum + b.depth, 0) / branchingData.length
+      : 0;
+    const maxBranchingDepth = Math.max(...branchingData.map(b => b.depth), 0);
+
+    // Branching distribution
+    const branchingDistribution: Record<string, number> = {};
+    for (const b of branchingData) {
+      const bucket = b.alternatives <= 2 ? '1-2' :
+                     b.alternatives <= 5 ? '3-5' :
+                     b.alternatives <= 10 ? '6-10' : '10+';
+      branchingDistribution[bucket] = (branchingDistribution[bucket] || 0) + 1;
+    }
+
+    // Rules with most branching
+    const rulesWithMostBranching = [...branchingData]
+      .sort((a, b) => b.alternatives - a.alternatives || b.depth - a.depth)
+      .slice(0, 5);
+
+    // Calculate cyclomatic complexity
+    const complexityData: Array<{ name: string; complexity: number }> = [];
+    for (const rule of parserRules) {
+      const complexity = this.calculateRuleComplexity(rule.definition);
+      complexityData.push({ name: rule.name, complexity });
+    }
+
+    const totalCyclomaticComplexity = complexityData.reduce((sum, c) => sum + c.complexity, 0);
+    const avgCyclomaticComplexity = complexityData.length > 0
+      ? totalCyclomaticComplexity / complexityData.length
+      : 0;
+    const maxCyclomaticComplexity = Math.max(...complexityData.map(c => c.complexity), 1);
+
+    // Detect recursive rules
+    const recursiveRules = this.detectRecursiveRules(analysis);
+
+    // Estimate parse complexity
+    let estimatedParseComplexity: 'low' | 'medium' | 'high' | 'very-high';
+    if (avgAlternatives < 3 && maxBranchingDepth <= 2 && recursiveRules.length === 0) {
+      estimatedParseComplexity = 'low';
+    } else if (avgAlternatives < 5 && maxBranchingDepth <= 3 && recursiveRules.length <= 2) {
+      estimatedParseComplexity = 'medium';
+    } else if (avgAlternatives < 8 || recursiveRules.length <= 5) {
+      estimatedParseComplexity = 'high';
+    } else {
+      estimatedParseComplexity = 'very-high';
+    }
+
+    // Calculate dependency metrics
+    const ruleReferences = new Map<string, Set<string>>();
+    const referencedBy = new Map<string, Set<string>>();
+
+    for (const rule of analysis.rules) {
+      ruleReferences.set(rule.name, new Set(rule.referencedRules));
+      for (const ref of rule.referencedRules) {
+        if (!referencedBy.has(ref)) {
+          referencedBy.set(ref, new Set());
+        }
+        referencedBy.get(ref)!.add(rule.name);
+      }
+    }
+
+    // Fan-in (how many rules reference this rule)
+    const fanInValues: number[] = [];
+    for (const rule of analysis.rules) {
+      fanInValues.push(referencedBy.get(rule.name)?.size || 0);
+    }
+
+    // Fan-out (how many rules this rule references)
+    const fanOutValues: number[] = [];
+    for (const rule of analysis.rules) {
+      fanOutValues.push(ruleReferences.get(rule.name)?.size || 0);
+    }
+
+    const avgFanIn = fanInValues.length > 0
+      ? fanInValues.reduce((sum, v) => sum + v, 0) / fanInValues.length
+      : 0;
+    const avgFanOut = fanOutValues.length > 0
+      ? fanOutValues.reduce((sum, v) => sum + v, 0) / fanOutValues.length
+      : 0;
+
+    // Orphan rules (not referenced by any other rule)
+    const orphanRules = analysis.rules
+      .filter(r => r.type === 'parser' && !referencedBy.has(r.name))
+      .map(r => r.name);
+
+    // Hub rules (referenced by many rules)
+    const hubRules = analysis.rules
+      .filter(r => (referencedBy.get(r.name)?.size || 0) >= 5)
+      .map(r => r.name);
+
+    // Most referenced rules
+    const mostReferenced = [...referencedBy.entries()]
+      .map(([name, refs]) => ({ name, count: refs.size }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+
+    return {
+      size: {
+        totalRules: analysis.rules.length,
+        parserRules: parserRules.length,
+        lexerRules: lexerRules.length,
+        fragments: fragments.length,
+        totalLines: lines.length,
+        avgRuleLength: analysis.rules.length > 0
+          ? Math.round(lines.length / analysis.rules.length)
+          : 0
+      },
+      branching: {
+        avgAlternatives: Math.round(avgAlternatives * 10) / 10,
+        maxAlternatives,
+        avgBranchingDepth: Math.round(avgBranchingDepth * 10) / 10,
+        maxBranchingDepth,
+        branchingDistribution,
+        rulesWithMostBranching
+      },
+      complexity: {
+        avgCyclomaticComplexity: Math.round(avgCyclomaticComplexity * 10) / 10,
+        maxCyclomaticComplexity,
+        totalCyclomaticComplexity,
+        recursiveRules,
+        estimatedParseComplexity
+      },
+      dependencies: {
+        avgFanIn: Math.round(avgFanIn * 10) / 10,
+        avgFanOut: Math.round(avgFanOut * 10) / 10,
+        orphanRules,
+        hubRules,
+        mostReferenced
+      }
+    };
+  }
+
+  /**
+   * Count alternatives in a rule definition
+   */
+  private static countAlternatives(definition: string): number {
+    const def = definition.split('->')[0].split(';')[0]; // Remove actions
+    let count = 1;
+    let depth = 0;
+    let inString = false;
+    let escapeNext = false;
+
+    for (let i = 0; i < def.length; i++) {
+      const char = def[i];
+
+      if (escapeNext) {
+        escapeNext = false;
+        continue;
+      }
+
+      if (char === '\\') {
+        escapeNext = true;
+        continue;
+      }
+
+      if (char === "'" && !inString) {
+        inString = true;
+        continue;
+      }
+
+      if (char === "'" && inString) {
+        inString = false;
+        continue;
+      }
+
+      if (!inString) {
+        if (char === '(' || char === '[') depth++;
+        if (char === ')' || char === ']') depth--;
+        if (char === '|' && depth === 0) count++;
+      }
+    }
+
+    return count;
+  }
+
+  /**
+   * Count maximum branching depth (subrule nesting)
+   */
+  private static countBranchingDepth(definition: string): number {
+    let maxDepth = 0;
+    let currentDepth = 0;
+    let inString = false;
+    let escapeNext = false;
+
+    for (let i = 0; i < definition.length; i++) {
+      const char = definition[i];
+
+      if (escapeNext) {
+        escapeNext = false;
+        continue;
+      }
+
+      if (char === '\\') {
+        escapeNext = true;
+        continue;
+      }
+
+      if (char === "'" && !inString) {
+        inString = true;
+        continue;
+      }
+
+      if (char === "'" && inString) {
+        inString = false;
+        continue;
+      }
+
+      if (!inString) {
+        if (char === '(') {
+          currentDepth++;
+          maxDepth = Math.max(maxDepth, currentDepth);
+        }
+        if (char === ')') currentDepth--;
+      }
+    }
+
+    return maxDepth;
+  }
+
+  /**
+   * Calculate cyclomatic complexity for a rule
+   */
+  private static calculateRuleComplexity(definition: string): number {
+    let complexity = 1; // Base complexity
+
+    const def = definition.split('->')[0].split(';')[0];
+    let depth = 0;
+    let inString = false;
+    let escapeNext = false;
+
+    for (let i = 0; i < def.length; i++) {
+      const char = def[i];
+
+      if (escapeNext) {
+        escapeNext = false;
+        continue;
+      }
+
+      if (char === '\\') {
+        escapeNext = true;
+        continue;
+      }
+
+      if (char === "'" && !inString) {
+        inString = true;
+        continue;
+      }
+
+      if (char === "'" && inString) {
+        inString = false;
+        continue;
+      }
+
+      if (!inString) {
+        if (char === '(' || char === '[') depth++;
+        if (char === ')' || char === ']') depth--;
+        // Each alternative adds to complexity
+        if (char === '|' && depth === 0) complexity++;
+        // Optional and repetition operators add complexity
+        if ((char === '?' || char === '*' || char === '+') && depth === 0) complexity++;
+      }
+    }
+
+    return complexity;
+  }
+
+  /**
+   * Detect recursive rules (direct and indirect)
+   */
+  private static detectRecursiveRules(analysis: GrammarAnalysis): string[] {
+    const recursive: string[] = [];
+
+    // Only check parser rules for recursion (lexer rules are not recursive in the same way)
+    for (const rule of analysis.rules) {
+      if (rule.type !== 'parser') continue;
+
+      if (rule.referencedRules.includes(rule.name)) {
+        // Direct recursion
+        if (!recursive.includes(rule.name)) {
+          recursive.push(rule.name);
+        }
+      }
+    }
+
+    // Check for indirect recursion (simplified - only one level)
+    for (const rule of analysis.rules) {
+      if (rule.type !== 'parser') continue;
+
+      for (const ref of rule.referencedRules) {
+        const refRule = analysis.rules.find(r => r.name === ref && r.type === 'parser');
+        if (refRule && refRule.referencedRules.includes(rule.name)) {
+          if (!recursive.includes(rule.name)) {
+            recursive.push(rule.name);
+          }
+        }
+      }
+    }
+
+    return recursive;
+  }
+
+  /**
+   * Detect ReDoS (Regular Expression Denial of Service) vulnerabilities
+   */
+  static detectReDoS(grammarContent: string): {
+    vulnerabilities: Array<{
+      ruleName: string;
+      lineNumber: number;
+      pattern: string;
+      issue: string;
+      severity: 'high' | 'medium' | 'low';
+      suggestion: string;
+    }>;
+    summary: {
+      high: number;
+      medium: number;
+      low: number;
+    };
+  } {
+    const analysis = this.analyze(grammarContent);
+    const vulnerabilities: Array<{
+      ruleName: string;
+      lineNumber: number;
+      pattern: string;
+      issue: string;
+      severity: 'high' | 'medium' | 'low';
+      suggestion: string;
+    }> = [];
+
+    for (const rule of analysis.rules) {
+      if (rule.type !== 'lexer') continue;
+
+      const def = rule.definition;
+      // Extract the pattern part
+      let pattern = def.replace(/^fragment\s+/, '');
+      const colonIndex = pattern.indexOf(':');
+      if (colonIndex >= 0) {
+        pattern = pattern.substring(colonIndex + 1);
+      }
+      pattern = pattern.split('->')[0].trim().replace(/;$/, '').trim();
+
+      // Check for ReDoS patterns
+
+      // Pattern 1: Nested quantifiers like (a+)+ or (a*)+
+      if (/\([^)]*[+*][^)]*\)[+*]/.test(pattern)) {
+        vulnerabilities.push({
+          ruleName: rule.name,
+          lineNumber: rule.lineNumber,
+          pattern,
+          issue: 'Nested quantifiers detected',
+          severity: 'high',
+          suggestion: 'Avoid nested quantifiers like (a+)+. Use possessive quantifiers or atomic groups if supported.'
+        });
+      }
+
+      // Pattern 2: Overlapping alternatives like (a|a)+
+      if (/\(([^|)]+)\|(\1)\)/.test(pattern)) {
+        vulnerabilities.push({
+          ruleName: rule.name,
+          lineNumber: rule.lineNumber,
+          pattern,
+          issue: 'Overlapping alternatives',
+          severity: 'high',
+          suggestion: 'Remove duplicate alternatives or make them non-overlapping.'
+        });
+      }
+
+      // Pattern 3: Alternation with common prefix like (ab|ac)
+      const altMatch = pattern.match(/\(([^)]+)\)/);
+      if (altMatch) {
+        const alts = altMatch[1].split('|').map(a => a.trim()).filter(a => a.length > 1);
+        for (let i = 0; i < alts.length; i++) {
+          for (let j = i + 1; j < alts.length; j++) {
+            if (alts[i][0] === alts[j][0] && alts[i].length > 1 && alts[j].length > 1) {
+              vulnerabilities.push({
+                ruleName: rule.name,
+                lineNumber: rule.lineNumber,
+                pattern,
+                issue: 'Alternatives with common prefix',
+                severity: 'medium',
+                suggestion: `Factor out common prefix: ${alts[i][0]}(${alts[i].slice(1)}|${alts[j].slice(1)})`
+              });
+            }
+          }
+        }
+      }
+
+      // Pattern 4: Unbounded repetition of broad character classes
+      if (/\[[^\]]*\][+*]/.test(pattern) && /\[[^\]]{10,}\]/.test(pattern)) {
+        vulnerabilities.push({
+          ruleName: rule.name,
+          lineNumber: rule.lineNumber,
+          pattern,
+          issue: 'Unbounded repetition of broad character class',
+          severity: 'medium',
+          suggestion: 'Limit the character class or add length bounds.'
+        });
+      }
+
+      // Pattern 5: Multiple optional quantifiers in sequence
+      const optionalSeq = pattern.match(/\w+\?\s*\w+\?\s*\w+\?/);
+      if (optionalSeq && optionalSeq[0].split(/\?/).length > 4) {
+        vulnerabilities.push({
+          ruleName: rule.name,
+          lineNumber: rule.lineNumber,
+          pattern,
+          issue: 'Multiple optional elements in sequence',
+          severity: 'low',
+          suggestion: 'Consider grouping optional elements or using a different structure.'
+        });
+      }
+    }
+
+    const summary = {
+      high: vulnerabilities.filter(v => v.severity === 'high').length,
+      medium: vulnerabilities.filter(v => v.severity === 'medium').length,
+      low: vulnerabilities.filter(v => v.severity === 'low').length
+    };
+
+    return { vulnerabilities, summary };
+  }
+
+  /**
+   * Check grammar style and best practices
+   */
+  static checkStyle(grammarContent: string): {
+    issues: Array<{
+      type: 'naming' | 'formatting' | 'best-practice' | 'maintainability';
+      severity: 'error' | 'warning' | 'info';
+      ruleName?: string;
+      lineNumber?: number;
+      message: string;
+      suggestion?: string;
+    }>;
+    summary: {
+      errors: number;
+      warnings: number;
+      infos: number;
+    };
+    score: number; // 0-100
+  } {
+    const analysis = this.analyze(grammarContent);
+    const issues: Array<{
+      type: 'naming' | 'formatting' | 'best-practice' | 'maintainability';
+      severity: 'error' | 'warning' | 'info';
+      ruleName?: string;
+      lineNumber?: number;
+      message: string;
+      suggestion?: string;
+    }> = [];
+
+    // Check naming conventions
+    for (const rule of analysis.rules) {
+      // Lexer rules should be UPPER_CASE
+      if (rule.type === 'lexer' && !rule.name.startsWith('fragment')) {
+        if (!/^[A-Z][A-Z0-9_]*$/.test(rule.name)) {
+          issues.push({
+            type: 'naming',
+            severity: 'warning',
+            ruleName: rule.name,
+            lineNumber: rule.lineNumber,
+            message: `Lexer rule '${rule.name}' should use UPPER_CASE naming`,
+            suggestion: `Consider renaming to ${rule.name.toUpperCase()}`
+          });
+        }
+      }
+
+      // Parser rules should be lowerCamelCase
+      if (rule.type === 'parser') {
+        if (!/^[a-z][a-zA-Z0-9_]*$/.test(rule.name)) {
+          issues.push({
+            type: 'naming',
+            severity: 'warning',
+            ruleName: rule.name,
+            lineNumber: rule.lineNumber,
+            message: `Parser rule '${rule.name}' should use lowerCamelCase naming`,
+            suggestion: `Consider renaming to ${rule.name.charAt(0).toLowerCase() + rule.name.slice(1)}`
+          });
+        }
+      }
+    }
+
+    // Check for overly complex rules
+    const metrics = this.calculateGrammarMetrics(grammarContent);
+    for (const rule of metrics.branching.rulesWithMostBranching) {
+      if (rule.alternatives > 10) {
+        const fullRule = analysis.rules.find(r => r.name === rule.name);
+        issues.push({
+          type: 'maintainability',
+          severity: 'warning',
+          ruleName: rule.name,
+          lineNumber: fullRule?.lineNumber,
+          message: `Rule '${rule.name}' has ${rule.alternatives} alternatives, consider splitting`,
+          suggestion: 'Break into multiple smaller rules or use helper rules'
+        });
+      }
+    }
+
+    // Check for unused rules (orphans that aren't entry points)
+    const entryPoints = ['program', 'start', 'file', 'compilationUnit', 'main'];
+    for (const orphan of metrics.dependencies.orphanRules) {
+      if (!entryPoints.includes(orphan.toLowerCase())) {
+        const rule = analysis.rules.find(r => r.name === orphan);
+        issues.push({
+          type: 'best-practice',
+          severity: 'info',
+          ruleName: orphan,
+          lineNumber: rule?.lineNumber,
+          message: `Rule '${orphan}' is not referenced by any other rule`,
+          suggestion: 'Remove if unused, or verify it\'s an entry point'
+        });
+      }
+    }
+
+    // Check for missing comments/documentation
+    const lines = grammarContent.split('\n');
+    let lastCommentLine = 0;
+    for (const rule of analysis.rules) {
+      // Check if there's a comment within 3 lines before the rule
+      let hasNearbyComment = false;
+      for (let i = Math.max(0, rule.lineNumber - 4); i < rule.lineNumber - 1; i++) {
+        const line = lines[i]?.trim();
+        if (line && (line.startsWith('//') || line.startsWith('/*') || line.startsWith('*'))) {
+          hasNearbyComment = true;
+          break;
+        }
+      }
+
+      // Only warn for complex rules without comments
+      const complexity = this.calculateRuleComplexity(rule.definition);
+      if (!hasNearbyComment && complexity > 5 && rule.type === 'parser') {
+        issues.push({
+          type: 'maintainability',
+          severity: 'info',
+          ruleName: rule.name,
+          lineNumber: rule.lineNumber,
+          message: `Complex rule '${rule.name}' lacks documentation`,
+          suggestion: 'Add a comment explaining the rule purpose'
+        });
+      }
+    }
+
+    // Check for grammar declaration
+    if (!grammarContent.match(/^(lexer\s+grammar|parser\s+grammar|grammar)\s+/m)) {
+      issues.push({
+        type: 'best-practice',
+        severity: 'error',
+        message: 'Missing grammar declaration',
+        suggestion: 'Add "grammar Name;" at the beginning of the file'
+      });
+    }
+
+    // Calculate score
+    const errors = issues.filter(i => i.severity === 'error').length;
+    const warnings = issues.filter(i => i.severity === 'warning').length;
+    const infos = issues.filter(i => i.severity === 'info').length;
+
+    // Start at 100, deduct for issues
+    let score = 100;
+    score -= errors * 15;
+    score -= warnings * 5;
+    score -= infos * 1;
+    score = Math.max(0, Math.min(100, score));
+
+    return {
+      issues,
+      summary: { errors, warnings, infos },
+      score
+    };
+  }
+
   static previewTokens(
     grammarContent: string,
     input: string,

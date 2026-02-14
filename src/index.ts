@@ -2299,6 +2299,131 @@ Common use cases:
     },
   },
   {
+    name: 'grammar-metrics',
+    description: `Calculate comprehensive grammar metrics including branching estimation, complexity, and dependencies.
+
+**When to use:** Understanding grammar complexity, identifying optimization opportunities, estimating parsing performance.
+
+**Metrics included:**
+
+**Size Metrics:**
+- Total/parser/lexer rule counts
+- Fragment counts
+- Lines of code, average rule length
+
+**Branching Metrics:**
+- Average/max alternatives per rule
+- Branching depth (subrule nesting)
+- Branching distribution (1-2, 3-5, 6-10, 10+)
+- Rules with most branching
+
+**Complexity Metrics:**
+- Cyclomatic complexity (per rule and total)
+- Recursive rules detection
+- Estimated parse complexity (low/medium/high/very-high)
+
+**Dependency Metrics:**
+- Fan-in/fan-out averages
+- Orphan rules (unused)
+- Hub rules (highly referenced)
+- Most referenced rules
+
+**Example:**
+  from_file: "MyGrammar.g4"`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        grammar_content: {
+          type: 'string',
+          description: 'The ANTLR4 grammar file content',
+        },
+        from_file: {
+          type: 'string',
+          description: 'Optional: path to a grammar file to read',
+        },
+      },
+      required: ['grammar_content'],
+    },
+  },
+  {
+    name: 'detect-redos',
+    description: `Detect ReDoS (Regular Expression Denial of Service) vulnerabilities in lexer patterns.
+
+**When to use:** Security audit, performance optimization, validating lexer patterns.
+
+**Detects:**
+- Nested quantifiers: (a+)+, (a*)*
+- Overlapping alternatives: (a|a)+
+- Alternatives with common prefix: (ab|ac)
+- Unbounded repetition of broad character classes
+- Multiple optional elements in sequence
+
+**Returns:**
+- List of vulnerabilities with severity (high/medium/low)
+- Line numbers and affected rules
+- Specific suggestions for each issue
+
+**Example:**
+  from_file: "MyLexer.g4"`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        grammar_content: {
+          type: 'string',
+          description: 'The ANTLR4 grammar file content',
+        },
+        from_file: {
+          type: 'string',
+          description: 'Optional: path to a grammar file to read',
+        },
+      },
+      required: ['grammar_content'],
+    },
+  },
+  {
+    name: 'check-style',
+    description: `Check grammar style and best practices with quality scoring.
+
+**When to use:** Code review, maintaining grammar quality, enforcing conventions.
+
+**Checks:**
+
+**Naming Conventions:**
+- Lexer rules should use UPPER_CASE
+- Parser rules should use lowerCamelCase
+
+**Best Practices:**
+- Missing grammar declaration
+- Unused/orphan rules
+- Overly complex rules
+
+**Maintainability:**
+- Missing documentation on complex rules
+- Rule complexity warnings
+
+**Returns:**
+- Issues with severity (error/warning/info)
+- Style score (0-100)
+- Specific suggestions for each issue
+
+**Example:**
+  from_file: "MyGrammar.g4"`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        grammar_content: {
+          type: 'string',
+          description: 'The ANTLR4 grammar file content',
+        },
+        from_file: {
+          type: 'string',
+          description: 'Optional: path to a grammar file to read',
+        },
+      },
+      required: ['grammar_content'],
+    },
+  },
+  {
     name: 'move-rule',
     description: `Move an existing rule to a new position relative to another rule.
 
@@ -2696,14 +2821,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             case 'overview':
               helpText = `# ANTLR4 MCP Server - Tool Overview
 
-This server provides 37 specialized tools for working with ANTLR4 grammars, organized into 5 categories:
+This server provides 40 specialized tools for working with ANTLR4 grammars, organized into 5 categories:
 
-## 📊 Analysis & Inspection (11 tools)
-Extract structure, validate syntax, find rules, compare grammars, detect ambiguities. **Now with multi-file and lexer mode support!**
+## 📊 Analysis & Inspection (14 tools)
+Extract structure, validate syntax, find rules, compare grammars, detect ambiguities. **Now with metrics and security scanning!**
 
-Tools: analyze-grammar ⭐, validate-grammar ⭐, list-rules, find-rule, format-grammar, get-suggestions, compare-grammars, analyze-ambiguities, analyze-lexer-modes ⭐, analyze-mode-transitions, list-mode-rules
+Tools: analyze-grammar ⭐, validate-grammar ⭐, list-rules, find-rule, format-grammar, get-suggestions, compare-grammars, analyze-ambiguities, analyze-lexer-modes ⭐, analyze-mode-transitions, list-mode-rules, grammar-metrics ⭐, detect-redos ⭐, check-style
 
-**When to use:** Exploring grammars, understanding structure, finding issues, analyzing dependencies, detecting ambiguities, understanding lexer modes. Use load_imports: true for multi-file projects.
+**When to use:** Exploring grammars, understanding structure, finding issues, analyzing dependencies, detecting ambiguities, measuring complexity, security auditing. Use load_imports: true for multi-file projects.
 
 ## ✏️ Authoring & Modification (16 tools)
 Add, remove, update, and rename rules with automatic sorting and duplicate prevention. **Now with lexer mode support!**
@@ -5325,6 +5450,230 @@ ${writeResult.message}`;
           };
         }
 
+        case 'grammar-metrics': {
+          const metrics = AntlrAnalyzer.calculateGrammarMetrics(grammarContent);
+
+          let output = '# Grammar Metrics\n\n';
+
+          // Size metrics
+          output += `## Size\n`;
+          output += `| Metric | Value |\n`;
+          output += `|--------|-------|\n`;
+          output += `| Total Rules | ${metrics.size.totalRules} |\n`;
+          output += `| Parser Rules | ${metrics.size.parserRules} |\n`;
+          output += `| Lexer Rules | ${metrics.size.lexerRules} |\n`;
+          output += `| Fragments | ${metrics.size.fragments} |\n`;
+          output += `| Total Lines | ${metrics.size.totalLines} |\n`;
+          output += `| Avg Rule Length | ${metrics.size.avgRuleLength} lines |\n\n`;
+
+          // Branching metrics
+          output += `## Branching\n`;
+          output += `| Metric | Value |\n`;
+          output += `|--------|-------|\n`;
+          output += `| Avg Alternatives | ${metrics.branching.avgAlternatives} |\n`;
+          output += `| Max Alternatives | ${metrics.branching.maxAlternatives} |\n`;
+          output += `| Avg Branching Depth | ${metrics.branching.avgBranchingDepth} |\n`;
+          output += `| Max Branching Depth | ${metrics.branching.maxBranchingDepth} |\n\n`;
+
+          output += `**Distribution:**\n`;
+          for (const [bucket, count] of Object.entries(metrics.branching.branchingDistribution)) {
+            output += `- ${bucket} alternatives: ${count} rules\n`;
+          }
+          output += `\n`;
+
+          if (metrics.branching.rulesWithMostBranching.length > 0) {
+            output += `**Top Branching Rules:**\n`;
+            for (const rule of metrics.branching.rulesWithMostBranching) {
+              output += `- ${rule.name}: ${rule.alternatives} alternatives, depth ${rule.depth}\n`;
+            }
+            output += `\n`;
+          }
+
+          // Complexity metrics
+          output += `## Complexity\n`;
+          output += `| Metric | Value |\n`;
+          output += `|--------|-------|\n`;
+          output += `| Avg Cyclomatic Complexity | ${metrics.complexity.avgCyclomaticComplexity} |\n`;
+          output += `| Max Cyclomatic Complexity | ${metrics.complexity.maxCyclomaticComplexity} |\n`;
+          output += `| Total Complexity | ${metrics.complexity.totalCyclomaticComplexity} |\n`;
+          output += `| Estimated Parse Complexity | **${metrics.complexity.estimatedParseComplexity.toUpperCase()}** |\n\n`;
+
+          if (metrics.complexity.recursiveRules.length > 0) {
+            output += `**Recursive Rules:** ${metrics.complexity.recursiveRules.join(', ')}\n\n`;
+          }
+
+          // Dependency metrics
+          output += `## Dependencies\n`;
+          output += `| Metric | Value |\n`;
+          output += `|--------|-------|\n`;
+          output += `| Avg Fan-In | ${metrics.dependencies.avgFanIn} |\n`;
+          output += `| Avg Fan-Out | ${metrics.dependencies.avgFanOut} |\n\n`;
+
+          if (metrics.dependencies.orphanRules.length > 0) {
+            output += `**Orphan Rules:** ${metrics.dependencies.orphanRules.join(', ')}\n\n`;
+          }
+
+          if (metrics.dependencies.hubRules.length > 0) {
+            output += `**Hub Rules:** ${metrics.dependencies.hubRules.join(', ')}\n\n`;
+          }
+
+          if (metrics.dependencies.mostReferenced.length > 0) {
+            output += `**Most Referenced:**\n`;
+            for (const ref of metrics.dependencies.mostReferenced) {
+              output += `- ${ref.name}: ${ref.count} references\n`;
+            }
+          }
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: output,
+              } as TextContent,
+            ],
+          };
+        }
+
+        case 'detect-redos': {
+          const result = AntlrAnalyzer.detectReDoS(grammarContent);
+
+          let output = '# ReDoS Vulnerability Analysis\n\n';
+
+          output += `**Summary:** `;
+          if (result.summary.high > 0) {
+            output += `🔴 ${result.summary.high} high, `;
+          }
+          if (result.summary.medium > 0) {
+            output += `🟡 ${result.summary.medium} medium, `;
+          }
+          if (result.summary.low > 0) {
+            output += `🟢 ${result.summary.low} low`;
+          }
+          if (result.summary.high === 0 && result.summary.medium === 0 && result.summary.low === 0) {
+            output += `✅ No vulnerabilities detected`;
+          }
+          output += `\n\n`;
+
+          if (result.vulnerabilities.length > 0) {
+            // Group by severity
+            const high = result.vulnerabilities.filter(v => v.severity === 'high');
+            const medium = result.vulnerabilities.filter(v => v.severity === 'medium');
+            const low = result.vulnerabilities.filter(v => v.severity === 'low');
+
+            if (high.length > 0) {
+              output += `## 🔴 High Severity\n\n`;
+              for (const v of high) {
+                output += `**${v.ruleName}** (line ${v.lineNumber})\n`;
+                output += `- Issue: ${v.issue}\n`;
+                output += `- Pattern: \`${v.pattern}\`\n`;
+                output += `- Suggestion: ${v.suggestion}\n\n`;
+              }
+            }
+
+            if (medium.length > 0) {
+              output += `## 🟡 Medium Severity\n\n`;
+              for (const v of medium) {
+                output += `**${v.ruleName}** (line ${v.lineNumber})\n`;
+                output += `- Issue: ${v.issue}\n`;
+                output += `- Suggestion: ${v.suggestion}\n\n`;
+              }
+            }
+
+            if (low.length > 0) {
+              output += `## 🟢 Low Severity\n\n`;
+              for (const v of low) {
+                output += `**${v.ruleName}** (line ${v.lineNumber})\n`;
+                output += `- Issue: ${v.issue}\n`;
+                output += `- Suggestion: ${v.suggestion}\n\n`;
+              }
+            }
+          }
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: output,
+              } as TextContent,
+            ],
+            isError: result.summary.high > 0,
+          };
+        }
+
+        case 'check-style': {
+          const result = AntlrAnalyzer.checkStyle(grammarContent);
+
+          let output = '# Style Check\n\n';
+
+          // Score
+          const scoreEmoji = result.score >= 80 ? '✅' : result.score >= 60 ? '⚠️' : '❌';
+          output += `**Style Score:** ${scoreEmoji} ${result.score}/100\n\n`;
+
+          output += `**Summary:** `;
+          if (result.summary.errors > 0) {
+            output += `${result.summary.errors} errors, `;
+          }
+          if (result.summary.warnings > 0) {
+            output += `${result.summary.warnings} warnings, `;
+          }
+          if (result.summary.infos > 0) {
+            output += `${result.summary.infos} info`;
+          }
+          if (result.summary.errors === 0 && result.summary.warnings === 0 && result.summary.infos === 0) {
+            output += `✅ No issues`;
+          }
+          output += `\n\n`;
+
+          if (result.issues.length > 0) {
+            // Group by type
+            const errors = result.issues.filter(i => i.severity === 'error');
+            const warnings = result.issues.filter(i => i.severity === 'warning');
+            const infos = result.issues.filter(i => i.severity === 'info');
+
+            if (errors.length > 0) {
+              output += `## ❌ Errors\n\n`;
+              for (const issue of errors) {
+                output += `- ${issue.message}`;
+                if (issue.ruleName) output += ` (${issue.ruleName})`;
+                output += `\n`;
+                if (issue.suggestion) output += `  💡 ${issue.suggestion}\n`;
+              }
+              output += `\n`;
+            }
+
+            if (warnings.length > 0) {
+              output += `## ⚠️ Warnings\n\n`;
+              for (const issue of warnings) {
+                output += `- ${issue.message}`;
+                if (issue.ruleName) output += ` (${issue.ruleName})`;
+                output += `\n`;
+                if (issue.suggestion) output += `  💡 ${issue.suggestion}\n`;
+              }
+              output += `\n`;
+            }
+
+            if (infos.length > 0) {
+              output += `## ℹ️ Info\n\n`;
+              for (const issue of infos) {
+                output += `- ${issue.message}`;
+                if (issue.ruleName) output += ` (${issue.ruleName})`;
+                output += `\n`;
+                if (issue.suggestion) output += `  💡 ${issue.suggestion}\n`;
+              }
+            }
+          }
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: output,
+              } as TextContent,
+            ],
+            isError: result.summary.errors > 0,
+          };
+        }
+
         case 'move-rule': {
           const ruleName = (argsObj.rule_name as string) || '';
           const position = (argsObj.position as 'before' | 'after') || 'before';
@@ -5776,7 +6125,7 @@ async function main() {
       await server.connect(transport);
 
       // Display startup message
-      console.error('\n🎯 antlr4-mcp v1.0.0 loaded with 37+ tools!');
+      console.error('\n🎯 antlr4-mcp v1.0.0 loaded with 40+ tools!');
       console.error('📚 Key capabilities:');
       console.error('  • Smart validation - Aggregate 17,000+ warnings into actionable items');
       console.error('  • Quantifier detection - Find ? that should be *');
@@ -5803,7 +6152,7 @@ async function main() {
     await server.connect(transport);
 
     // Display startup message
-    console.error('\n🎯 antlr4-mcp v1.0.0 loaded with 37+ tools!');
+    console.error('\n🎯 antlr4-mcp v1.0.0 loaded with 40+ tools!');
     console.error('📚 Key capabilities:');
     console.error('  • Smart validation - Aggregate 17,000+ warnings into actionable items');
     console.error('  • Quantifier detection - Find ? that should be *');
