@@ -486,6 +486,236 @@ export class Antlr4Runtime {
   }
 
   /**
+   * Benchmark grammar parsing performance using native ANTLR4
+   *
+   * @param grammarFiles - Map of filename to content for all grammar files
+   * @param startRule - The parser rule to start from
+   * @param input - Input text to parse
+   * @param options - Benchmark options
+   */
+  async benchmark(
+    grammarFiles: Map<string, string>,
+    startRule: string,
+    input: string,
+    options: {
+      iterations?: number;
+      warmupIterations?: number;
+    } = {}
+  ): Promise<{
+    success: boolean;
+    metrics: {
+      avgTimeMs: number;
+      minTimeMs: number;
+      maxTimeMs: number;
+      stdDevMs: number;
+      totalTokens: number;
+      inputSize: number;
+      throughput: number;
+      iterations: number;
+    };
+    errors?: string[];
+    performanceRating: 'excellent' | 'good' | 'fair' | 'slow';
+  }> {
+    const iterations = options.iterations || 10;
+    const warmupIterations = options.warmupIterations || 3;
+
+    const available = await this.isAvailable();
+    if (!available) {
+      return {
+        success: false,
+        metrics: {
+          avgTimeMs: 0,
+          minTimeMs: 0,
+          maxTimeMs: 0,
+          stdDevMs: 0,
+          totalTokens: 0,
+          inputSize: input.length,
+          throughput: 0,
+          iterations: 0,
+        },
+        errors: ['ANTLR4 runtime not available. Install Java and ANTLR4 JAR.'],
+        performanceRating: 'slow',
+      };
+    }
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'antlr4-bench-'));
+
+    try {
+      // Write all grammar files
+      let mainGrammarName = '';
+      for (const [filename, content] of grammarFiles) {
+        const filePath = path.join(tmpDir, filename);
+        fs.writeFileSync(filePath, content, 'utf-8');
+
+        // Detect main grammar name from parser grammar
+        const parserMatch = content.match(/parser\s+grammar\s+(\w+)/);
+        const combinedMatch = content.match(/^grammar\s+(\w+)/m);
+        if (parserMatch) {
+          mainGrammarName = parserMatch[1];
+        } else if (combinedMatch && !mainGrammarName) {
+          mainGrammarName = combinedMatch[1];
+        }
+      }
+
+      // Detect lexer name
+      let lexerName = mainGrammarName;
+      for (const [filename, content] of grammarFiles) {
+        const lexerMatch = content.match(/lexer\s+grammar\s+(\w+)/);
+        if (lexerMatch) {
+          lexerName = lexerMatch[1];
+          break;
+        }
+      }
+
+      if (!mainGrammarName) {
+        throw new Error('Could not detect grammar name');
+      }
+
+      // Write input file
+      const inputFile = path.join(tmpDir, 'input.txt');
+      fs.writeFileSync(inputFile, input, 'utf-8');
+
+      // Write benchmark Java driver
+      const benchmarkJava = `
+import org.antlr.v4.runtime.*;
+import org.antlr.v4.runtime.tree.*;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+
+public class Benchmark {
+    public static void main(String[] args) throws Exception {
+        String lexerName = "${lexerName}";
+        String parserName = "${mainGrammarName}";
+        String startRule = "${startRule}";
+        String inputFile = "${inputFile}";
+        int iterations = ${iterations};
+        int warmup = ${warmupIterations};
+
+        String input = new String(Files.readAllBytes(Paths.get(inputFile)));
+        int inputSize = input.length();
+
+        Class<?> lexerClass = Class.forName(lexerName + "Lexer");
+        Class<?> parserClass = Class.forName(parserName + "Parser");
+
+        // Warmup
+        for (int i = 0; i < warmup; i++) {
+            parse(lexerClass, parserClass, startRule, input);
+        }
+
+        // Timed runs
+        long[] times = new long[iterations];
+        int totalTokens = 0;
+        for (int i = 0; i < iterations; i++) {
+            long start = System.nanoTime();
+            CommonTokenStream tokens = parse(lexerClass, parserClass, startRule, input);
+            long end = System.nanoTime();
+            times[i] = end - start;
+            if (i == 0) totalTokens = tokens.getNumberOfOnChannelTokens();
+        }
+
+        // Calculate stats
+        long sum = 0, min = Long.MAX_VALUE, max = Long.MIN_VALUE;
+        for (long t : times) {
+            sum += t;
+            if (t < min) min = t;
+            if (t > max) max = t;
+        }
+        double avg = (double) sum / iterations;
+        double variance = 0;
+        for (long t : times) variance += Math.pow(t - avg, 2);
+        double stdDev = Math.sqrt(variance / iterations);
+
+        System.out.println("{\"avgMs\":" + (avg/1e6) + ",\"minMs\":" + (min/1e6) +
+            ",\"maxMs\":" + (max/1e6) + ",\"stdDevMs\":" + (stdDev/1e6) +
+            ",\"tokens\":" + totalTokens + ",\"inputSize\":" + inputSize +
+            ",\"throughput\":" + (inputSize / (avg / 1e9)) + "}");
+    }
+
+    static CommonTokenStream parse(Class<?> lexerClass, Class<?> parserClass,
+                                   String startRule, String input) throws Exception {
+        CharStream chars = CharStreams.fromString(input);
+        Lexer lexer = (Lexer) lexerClass.getConstructor(CharStream.class).newInstance(chars);
+        CommonTokenStream tokens = new CommonTokenStream(lexer);
+        Parser parser = (Parser) parserClass.getConstructor(TokenStream.class).newInstance(tokens);
+        parser.getClass().getMethod(startRule).invoke(parser);
+        return tokens;
+    }
+}
+`;
+      fs.writeFileSync(path.join(tmpDir, 'Benchmark.java'), benchmarkJava, 'utf-8');
+
+      // Compile grammar
+      const g4Files = Array.from(grammarFiles.keys())
+        .filter((f: string) => f.endsWith('.g4'))
+        .map((f: string) => path.basename(f))
+        .join(' ');
+      await execAsync(`cd ${tmpDir} && ${this.antlr4Command} ${g4Files}`, {
+        timeout: this.config.timeout,
+      });
+
+      // Compile Java
+      await execAsync(
+        `cd ${tmpDir} && javac -cp "${this.getClasspath()}" *.java`,
+        { timeout: this.config.timeout }
+      );
+
+      // Run benchmark
+      const { stdout, stderr } = await execAsync(
+        `cd ${tmpDir} && java -cp ".:${this.getClasspath()}" Benchmark`,
+        { timeout: this.config.timeout }
+      );
+
+      // Parse result
+      const result = JSON.parse(stdout.trim());
+      const avgMs = result.avgMs;
+
+      let performanceRating: 'excellent' | 'good' | 'fair' | 'slow';
+      if (avgMs < 10) performanceRating = 'excellent';
+      else if (avgMs < 50) performanceRating = 'good';
+      else if (avgMs < 200) performanceRating = 'fair';
+      else performanceRating = 'slow';
+
+      return {
+        success: true,
+        metrics: {
+          avgTimeMs: Math.round(result.avgMs * 100) / 100,
+          minTimeMs: Math.round(result.minMs * 100) / 100,
+          maxTimeMs: Math.round(result.maxMs * 100) / 100,
+          stdDevMs: Math.round(result.stdDevMs * 100) / 100,
+          totalTokens: result.tokens,
+          inputSize: result.inputSize,
+          throughput: Math.round(result.throughput),
+          iterations,
+        },
+        errors: stderr.trim() ? [stderr] : undefined,
+        performanceRating,
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        metrics: {
+          avgTimeMs: 0,
+          minTimeMs: 0,
+          maxTimeMs: 0,
+          stdDevMs: 0,
+          totalTokens: 0,
+          inputSize: input.length,
+          throughput: 0,
+          iterations: 0,
+        },
+        errors: [this.formatError(error)],
+        performanceRating: 'slow',
+      };
+    } finally {
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  }
+
+  /**
    * Format error message for user display
    */
   private formatError(error: any): string {

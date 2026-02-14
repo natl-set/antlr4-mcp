@@ -2516,6 +2516,67 @@ Common use cases:
     },
   },
   {
+    name: 'native-benchmark',
+    description: `Benchmark grammar using actual ANTLR4 Java runtime (most accurate).
+
+**When to use:** Final performance testing, comparing grammars, production validation.
+
+**Requirements:**
+- Java must be installed
+- ANTLR4 JAR must be available (auto-downloads to ~/.local/lib/)
+
+**Features:**
+- Uses real ANTLR4 parser (100% accurate)
+- Low-overhead Java driver (avoids JVM startup per iteration)
+- Warmup iterations for JIT optimization
+- Supports multi-file grammars
+
+**Parameters:**
+- grammar_files: Object mapping filename to content {"Expr.g4": "grammar Expr..."}
+- start_rule: Parser rule to start from
+- input: Sample input text
+- iterations: Timed iterations (default: 10)
+- warmup_iterations: Warmup runs (default: 3)
+
+**Example:**
+  grammar_files: {"Expr.g4": "grammar Expr; start: expr EOF; ..."}
+  start_rule: "start"
+  input: "1 + 2 * 3"
+  iterations: 20
+
+**Returns:**
+- Avg/min/max parse time
+- Throughput (chars/sec, tokens/sec)
+- Performance rating (excellent/good/fair/slow)`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        grammar_files: {
+          type: 'object',
+          description: 'Map of filename to grammar content',
+          additionalProperties: { type: 'string' },
+        },
+        start_rule: {
+          type: 'string',
+          description: 'Parser rule to start parsing from',
+        },
+        input: {
+          type: 'string',
+          description: 'Input text to parse',
+        },
+        iterations: {
+          type: 'number',
+          description: 'Number of timed iterations (default: 10)',
+        },
+        warmup_iterations: {
+          type: 'number',
+          description: 'Warmup runs before timing (default: 3)',
+        },
+      },
+      required: ['grammar_files', 'start_rule', 'input'],
+    },
+  },
+  {
     name: 'move-rule',
     description: `Move an existing rule to a new position relative to another rule.
 
@@ -5926,6 +5987,96 @@ ${writeResult.message}`;
                 text: output,
               } as TextContent,
             ],
+            isError: false,
+          };
+        }
+
+        case 'native-benchmark': {
+          const grammarFilesObj = argsObj.grammar_files as Record<string, string>;
+          const startRule = (argsObj.start_rule as string) || '';
+          const inputText = (argsObj.input as string) || '';
+          const iterations = (argsObj.iterations as number) || 10;
+          const warmupIterations = (argsObj.warmup_iterations as number) || 3;
+
+          if (!grammarFilesObj || Object.keys(grammarFilesObj).length === 0) {
+            return {
+              content: [{ type: 'text', text: 'Error: grammar_files parameter is required' } as TextContent],
+              isError: true,
+            };
+          }
+
+          if (!startRule) {
+            return {
+              content: [{ type: 'text', text: 'Error: start_rule parameter is required' } as TextContent],
+              isError: true,
+            };
+          }
+
+          if (!inputText) {
+            return {
+              content: [{ type: 'text', text: 'Error: input parameter is required' } as TextContent],
+              isError: true,
+            };
+          }
+
+          // Convert to Map
+          const grammarFiles = new Map(Object.entries(grammarFilesObj));
+
+          // Use native runtime
+          const runtime = getRuntime();
+          const result = await runtime.benchmark(grammarFiles, startRule, inputText, {
+            iterations,
+            warmupIterations
+          });
+
+          let output = '# Native ANTLR4 Benchmark Results\n\n';
+
+          if (!result.success) {
+            output += `❌ **Benchmark Failed**\n\n`;
+            if (result.errors) {
+              output += `**Errors:**\n`;
+              for (const err of result.errors) {
+                output += `- ${err}\n`;
+              }
+            }
+            return {
+              content: [{ type: 'text', text: output } as TextContent],
+              isError: true,
+            };
+          }
+
+          // Performance rating
+          const ratingEmoji = { excellent: '🚀', good: '✅', fair: '⚠️', slow: '🐌' };
+          output += `**Performance Rating:** ${ratingEmoji[result.performanceRating]} ${result.performanceRating.toUpperCase()}\n\n`;
+
+          // Metrics table
+          output += `## Metrics\n\n`;
+          output += `| Metric | Value |\n`;
+          output += `|--------|-------|\n`;
+          output += `| Input Size | ${result.metrics.inputSize} chars |\n`;
+          output += `| Total Tokens | ${result.metrics.totalTokens} |\n`;
+          output += `| Avg Parse Time | ${result.metrics.avgTimeMs} ms |\n`;
+          output += `| Min Parse Time | ${result.metrics.minTimeMs} ms |\n`;
+          output += `| Max Parse Time | ${result.metrics.maxTimeMs} ms |\n`;
+          output += `| Std Deviation | ${result.metrics.stdDevMs} ms |\n`;
+          output += `| Throughput | ${result.metrics.throughput.toLocaleString()} chars/sec |\n`;
+          output += `| Est. Tokens/sec | ~${Math.round(result.metrics.throughput / 5).toLocaleString()} |\n`;
+          output += `| Iterations | ${result.metrics.iterations} |\n\n`;
+
+          // Performance interpretation
+          output += `## Interpretation\n\n`;
+          if (result.performanceRating === 'excellent') {
+            output += `Grammar parses efficiently. No optimization needed.\n`;
+          } else if (result.performanceRating === 'good') {
+            output += `Grammar performs well. Minor optimizations possible.\n`;
+          } else if (result.performanceRating === 'fair') {
+            output += `Consider running \`analyze-bottlenecks\` to identify optimization opportunities.\n`;
+          } else {
+            output += `⚠️ Grammar may have performance issues. Run \`analyze-bottlenecks\` for recommendations.\n`;
+          }
+
+          return {
+            content: [{ type: 'text', text: output } as TextContent],
             isError: false,
           };
         }

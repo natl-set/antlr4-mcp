@@ -2859,9 +2859,16 @@ export class AntlrAnalyzer {
       ? fanOutValues.reduce((sum, v) => sum + v, 0) / fanOutValues.length
       : 0;
 
-    // Orphan rules (not referenced by any other rule)
+    // Orphan rules (not referenced by any OTHER rule, excluding self-references)
     const orphanRules = analysis.rules
-      .filter(r => r.type === 'parser' && !referencedBy.has(r.name))
+      .filter(r => {
+        if (r.type !== 'parser') return false;
+        const refs = referencedBy.get(r.name);
+        // Not an orphan if it's referenced by at least one OTHER rule
+        if (!refs) return true;
+        // Check if any reference is from a different rule
+        return ![...refs].some(refName => refName !== r.name);
+      })
       .map(r => r.name);
 
     // Hub rules (referenced by many rules)
