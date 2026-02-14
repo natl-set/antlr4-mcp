@@ -328,8 +328,15 @@ export class AntlrAnalyzer {
   private static extractReferencedRules(ruleContent: string): string[] {
     const references = new Set<string>();
 
-    // Remove string literals and comments
-    const cleaned = ruleContent.replace(/'[^']*'/g, '').replace(/"[^"]*"/g, '');
+    // Remove comments first (both // and /* */)
+    let cleaned = ruleContent
+      .replace(/\/\/[^\n]*/g, '')        // Remove single-line comments
+      .replace(/\/\*[\s\S]*?\*\//g, ''); // Remove multi-line comments
+
+    // Remove string literals
+    cleaned = cleaned
+      .replace(/'[^']*'/g, '')
+      .replace(/"[^"]*"/g, '');
 
     // Match rule references (alphanumeric identifiers)
     const matches = cleaned.match(/\b([a-zA-Z_][a-zA-Z0-9_]*)\b/g);
