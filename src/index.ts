@@ -2577,6 +2577,60 @@ Common use cases:
     },
   },
   {
+    name: 'profile-parsing',
+    description: `Profile grammar parsing with detailed performance metrics.
+
+**When to use:** Deep performance analysis, debugging slow parsing, optimizing grammars.
+
+**Measures:**
+- Parse time (ms)
+- Token count
+- Parse tree depth
+- Decision evaluations (ATN transitions)
+- Ambiguity count (conflicting alternatives)
+- Context sensitivity (SLL→LL fallbacks)
+- Rule invocation frequency
+
+**Parameters:**
+- grammar_files: Object mapping filename to content
+- start_rule: Parser rule to start from
+- input: Sample input text
+
+**Returns:**
+- Detailed profile metrics
+- Most frequently invoked rules
+- Optimization suggestions
+
+**Example:**
+  grammar_files: {"Expr.g4": "grammar Expr; ..."}
+  start_rule: "program"
+  input: "x = 1 + 2 * 3"
+
+**Interpretation:**
+- ambiguityCount > 0: Grammar has ambiguous alternatives
+- contextSensitivityCount > 10: Many SLL→LL fallbacks (slow)
+- treeDepth > 100: Excessive nesting`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        grammar_files: {
+          type: 'object',
+          description: 'Map of filename to grammar content',
+          additionalProperties: { type: 'string' },
+        },
+        start_rule: {
+          type: 'string',
+          description: 'Parser rule to start parsing from',
+        },
+        input: {
+          type: 'string',
+          description: 'Input text to parse',
+        },
+      },
+      required: ['grammar_files', 'start_rule', 'input'],
+    },
+  },
+  {
     name: 'move-rule',
     description: `Move an existing rule to a new position relative to another rule.
 
@@ -6074,6 +6128,129 @@ ${writeResult.message}`;
           } else {
             output += `⚠️ Grammar may have performance issues. Run \`analyze-bottlenecks\` for recommendations.\n`;
           }
+
+          return {
+            content: [{ type: 'text', text: output } as TextContent],
+            isError: false,
+          };
+        }
+
+        case 'profile-parsing': {
+          const grammarFilesObj = argsObj.grammar_files as Record<string, string>;
+          const startRule = (argsObj.start_rule as string) || '';
+          const inputText = (argsObj.input as string) || '';
+
+          if (!grammarFilesObj || Object.keys(grammarFilesObj).length === 0) {
+            return {
+              content: [{ type: 'text', text: 'Error: grammar_files parameter is required' } as TextContent],
+              isError: true,
+            };
+          }
+
+          if (!startRule) {
+            return {
+              content: [{ type: 'text', text: 'Error: start_rule parameter is required' } as TextContent],
+              isError: true,
+            };
+          }
+
+          if (!inputText) {
+            return {
+              content: [{ type: 'text', text: 'Error: input parameter is required' } as TextContent],
+              isError: true,
+            };
+          }
+
+          // Convert to Map
+          const grammarFiles = new Map(Object.entries(grammarFilesObj));
+
+          // Use native runtime for profiling
+          const runtime = getRuntime();
+          const result = await runtime.profileParsing(grammarFiles, startRule, inputText);
+
+          let output = '# Parsing Profile\n\n';
+
+          if (!result.success) {
+            output += `❌ **Profiling Failed**\n\n`;
+            if (result.errors) {
+              output += `**Errors:**\n`;
+              for (const err of result.errors) {
+                output += `- ${err}\n`;
+              }
+            }
+            return {
+              content: [{ type: 'text', text: output } as TextContent],
+              isError: true,
+            };
+          }
+
+          // Profile metrics
+          output += `## Performance Metrics\n\n`;
+          output += `| Metric | Value |\n`;
+          output += `|--------|-------|\n`;
+          output += `| Parse Time | ${result.profile.parseTimeMs} ms |\n`;
+          output += `| Token Count | ${result.profile.tokenCount} |\n`;
+          output += `| Tree Depth | ${result.profile.treeDepth} levels |\n`;
+          output += `| Decision Count | ${result.profile.decisionCount} |\n`;
+          output += `| Ambiguities | ${result.profile.ambiguityCount} |\n`;
+          output += `| Context Sensitivity | ${result.profile.contextSensitivityCount} |\n\n`;
+
+          // Rule frequency
+          if (result.rules.byFrequency.length > 0) {
+            output += `## Most Invoked Rules\n\n`;
+            output += `| Rule | Invocations |\n`;
+            output += `|------|------------:|\n`;
+            for (const r of result.rules.byFrequency.slice(0, 10)) {
+              output += `| ${r.rule} | ${r.count} |\n`;
+            }
+            output += `\n`;
+          }
+
+          // Interpretation
+          output += `## Interpretation\n\n`;
+
+          if (result.profile.ambiguityCount > 0) {
+            output += `⚠️ **Ambiguities Detected (${result.profile.ambiguityCount})**\n`;
+            output += `The parser found multiple valid interpretations. Consider:\n`;
+            output += `- Reordering alternatives (most common first)\n`;
+            output += `- Using semantic predicates to disambiguate\n`;
+            output += `- Left-factoring common prefixes\n\n`;
+          }
+
+          if (result.profile.contextSensitivityCount > 10) {
+            output += `⚠️ **High Context Sensitivity (${result.profile.contextSensitivityCount})**\n`;
+            output += `Many SLL→LL fallbacks detected. This slows parsing. Consider:\n`;
+            output += `- Reducing alternative count in rules\n`;
+            output += `- Using left-factoring\n`;
+            output += `- Avoiding deeply nested structures\n\n`;
+          } else if (result.profile.contextSensitivityCount > 0) {
+            output += `ℹ️ **Context Sensitivity (${result.profile.contextSensitivityCount})**\n`;
+            output += `Some SLL→LL fallbacks occurred. This is normal for complex grammars.\n\n`;
+          }
+
+          if (result.profile.treeDepth > 100) {
+            output += `⚠️ **Deep Parse Tree (${result.profile.treeDepth} levels)**\n`;
+            output += `The parse tree is very deep. This may indicate:\n`;
+            output += `- Excessive rule nesting\n`;
+            output += `- Recursive structures without proper termination\n\n`;
+          }
+
+          if (result.suggestions.length > 0) {
+            output += `## Suggestions\n\n`;
+            for (const s of result.suggestions) {
+              output += `- 💡 ${s}\n`;
+            }
+          }
+
+          // Performance rating
+          let rating = '✅ Good';
+          if (result.profile.ambiguityCount > 0 || result.profile.contextSensitivityCount > 10) {
+            rating = '⚠️ Needs Optimization';
+          }
+          if (result.profile.parseTimeMs > 1000) {
+            rating = '🐌 Slow';
+          }
+          output += `\n**Rating:** ${rating}\n`;
 
           return {
             content: [{ type: 'text', text: output } as TextContent],

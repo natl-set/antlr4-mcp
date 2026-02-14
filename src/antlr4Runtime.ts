@@ -716,6 +716,278 @@ public class Benchmark {
   }
 
   /**
+   * Profile grammar parsing with detailed metrics
+   *
+   * @param grammarFiles - Map of filename to content for all grammar files
+   * @param startRule - The parser rule to start from
+   * @param input - Input text to parse
+   */
+  async profileParsing(
+    grammarFiles: Map<string, string>,
+    startRule: string,
+    input: string
+  ): Promise<{
+    success: boolean;
+    profile: {
+      parseTimeMs: number;
+      tokenCount: number;
+      treeDepth: number;
+      decisionCount: number;
+      ambiguityCount: number;
+      contextSensitivityCount: number;
+      errors: string[];
+    };
+    rules: {
+      invoked: string[];
+      byFrequency: Array<{ rule: string; count: number }>;
+    };
+    suggestions: string[];
+    errors?: string[];
+  }> {
+    const available = await this.isAvailable();
+    if (!available) {
+      return {
+        success: false,
+        profile: {
+          parseTimeMs: 0,
+          tokenCount: 0,
+          treeDepth: 0,
+          decisionCount: 0,
+          ambiguityCount: 0,
+          contextSensitivityCount: 0,
+          errors: [],
+        },
+        rules: { invoked: [], byFrequency: [] },
+        suggestions: ['ANTLR4 runtime not available. Install Java and ANTLR4 JAR.'],
+        errors: ['ANTLR4 runtime not available'],
+      };
+    }
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'antlr4-profile-'));
+
+    try {
+      // Write all grammar files
+      let mainGrammarName = '';
+      for (const [filename, content] of grammarFiles) {
+        const filePath = path.join(tmpDir, filename);
+        fs.writeFileSync(filePath, content, 'utf-8');
+
+        const parserMatch = content.match(/parser\s+grammar\s+(\w+)/);
+        const combinedMatch = content.match(/^grammar\s+(\w+)/m);
+        if (parserMatch) {
+          mainGrammarName = parserMatch[1];
+        } else if (combinedMatch && !mainGrammarName) {
+          mainGrammarName = combinedMatch[1];
+        }
+      }
+
+      // Detect lexer name
+      let lexerName = mainGrammarName;
+      for (const [filename, content] of grammarFiles) {
+        const lexerMatch = content.match(/lexer\s+grammar\s+(\w+)/);
+        if (lexerMatch) {
+          lexerName = lexerMatch[1];
+          break;
+        }
+      }
+
+      if (!mainGrammarName) {
+        throw new Error('Could not detect grammar name');
+      }
+
+      // Write input file
+      const inputFile = path.join(tmpDir, 'input.txt');
+      fs.writeFileSync(inputFile, input, 'utf-8');
+
+      // Write profiling Java driver
+      const profilerJava = `
+import org.antlr.v4.runtime.*;
+import org.antlr.v4.runtime.atn.*;
+import org.antlr.v4.runtime.dfa.*;
+import org.antlr.v4.runtime.tree.*;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.*;
+
+public class Profiler extends DiagnosticErrorListener {
+    private int decisionCount = 0;
+    private int ambiguityCount = 0;
+    private int contextSensitivityCount = 0;
+    private int maxDepth = 0;
+    private Map<String, Integer> ruleInvocations = new HashMap<>();
+
+    public static void main(String[] args) throws Exception {
+        String lexerName = "${lexerName}";
+        String parserName = "${mainGrammarName}";
+        String startRule = "${startRule}";
+        String inputFile = "${inputFile}";
+
+        String input = new String(Files.readAllBytes(Paths.get(inputFile)));
+        int inputSize = input.length();
+
+        Class<?> lexerClass = Class.forName(lexerName + "Lexer");
+        Class<?> parserClass = Class.forName(parserName + "Parser");
+
+        CharStream chars = CharStreams.fromString(input);
+        Lexer lexer = (Lexer) lexerClass.getConstructor(CharStream.class).newInstance(chars);
+        CommonTokenStream tokens = new CommonTokenStream(lexer);
+
+        Parser parser = (Parser) parserClass.getConstructor(TokenStream.class).newInstance(tokens);
+
+        Profiler profiler = new Profiler();
+        parser.addErrorListener(profiler);
+
+        long start = System.nanoTime();
+        ParseTree tree = (ParseTree) parser.getClass().getMethod(startRule).invoke(parser);
+        long end = System.nanoTime();
+
+        double parseTimeMs = (end - start) / 1e6;
+        int tokenCount = tokens.getNumberOfOnChannelTokens();
+        int treeDepth = profiler.computeDepth(tree);
+
+        // Build frequency map
+        List<Map.Entry<String, Integer>> sorted = new ArrayList<>(profiler.ruleInvocations.entrySet());
+        sorted.sort((a, b) -> b.getValue() - a.getValue());
+        StringBuilder freqBuilder = new StringBuilder("[");
+        for (int i = 0; i < Math.min(10, sorted.size()); i++) {
+            if (i > 0) freqBuilder.append(",");
+            freqBuilder.append("{\\\"rule\\\":\\\"").append(sorted.get(i).getKey())
+                      .append("\\\",\\\"count\\\":").append(sorted.get(i).getValue()).append("}");
+        }
+        freqBuilder.append("]");
+
+        System.out.println("{");
+        System.out.println("  \\\"parseTimeMs\\\": " + parseTimeMs + ",");
+        System.out.println("  \\\"tokenCount\\\": " + tokenCount + ",");
+        System.out.println("  \\\"treeDepth\\\": " + treeDepth + ",");
+        System.out.println("  \\\"decisionCount\\\": " + profiler.decisionCount + ",");
+        System.out.println("  \\\"ambiguityCount\\\": " + profiler.ambiguityCount + ",");
+        System.out.println("  \\\"contextSensitivityCount\\\": " + profiler.contextSensitivityCount + ",");
+        System.out.println("  \\\"ruleInvocations\\\": " + freqBuilder);
+        System.out.println("}");
+    }
+
+    @Override
+    public void reportAmbiguity(Parser recognizer, DFA dfa, int startIndex, int stopIndex,
+                                 boolean exact, BitSet ambigAlts, ATNConfigSet configs) {
+        ambiguityCount++;
+        decisionCount++;
+    }
+
+    @Override
+    public void reportAttemptingFullContext(Parser recognizer, DFA dfa, int startIndex, int stopIndex,
+                                             BitSet conflictingAlts, ATNConfigSet configs) {
+        contextSensitivityCount++;
+        decisionCount++;
+    }
+
+    @Override
+    public void reportContextSensitivity(Parser recognizer, DFA dfa, int startIndex, int stopIndex,
+                                          int prediction, ATNConfigSet configs) {
+        contextSensitivityCount++;
+        decisionCount++;
+    }
+
+    private int computeDepth(ParseTree tree) {
+        if (tree == null) return 0;
+        if (tree instanceof ParserRuleContext) {
+            String ruleName = tree.getText().substring(0, Math.min(20, tree.getText().length()));
+            // Track rule invocations
+            String rule = ((ParserRuleContext) tree).getRuleIndex() >= 0 ?
+                ((ParserRuleContext) tree).getClass().getSimpleName().replace("Context", "") : "unknown";
+            ruleInvocations.merge(rule, 1, Integer::sum);
+        }
+        int maxChildDepth = 0;
+        for (int i = 0; i < tree.getChildCount(); i++) {
+            maxChildDepth = Math.max(maxChildDepth, computeDepth(tree.getChild(i)));
+        }
+        return 1 + maxChildDepth;
+    }
+}
+`;
+      fs.writeFileSync(path.join(tmpDir, 'Profiler.java'), profilerJava, 'utf-8');
+
+      // Compile grammar
+      const g4Files = Array.from(grammarFiles.keys())
+        .filter((f: string) => f.endsWith('.g4'))
+        .map((f: string) => path.basename(f))
+        .join(' ');
+      await execAsync(`cd ${tmpDir} && ${this.antlr4Command} ${g4Files}`, {
+        timeout: this.config.timeout,
+      });
+
+      // Compile Java
+      await execAsync(
+        `cd ${tmpDir} && javac -cp "${this.getClasspath()}" *.java`,
+        { timeout: this.config.timeout }
+      );
+
+      // Run profiler
+      const { stdout, stderr } = await execAsync(
+        `cd ${tmpDir} && java -cp ".:${this.getClasspath()}" Profiler`,
+        { timeout: this.config.timeout }
+      );
+
+      // Parse result
+      const result = JSON.parse(stdout.trim());
+
+      // Build suggestions based on profile
+      const suggestions: string[] = [];
+      if (result.ambiguityCount > 0) {
+        suggestions.push(`${result.ambiguityCount} ambiguities detected - consider restructuring alternatives`);
+      }
+      if (result.contextSensitivityCount > 10) {
+        suggestions.push(`High context sensitivity (${result.contextSensitivityCount}) - grammar may benefit from left-factoring`);
+      }
+      if (result.treeDepth > 100) {
+        suggestions.push(`Deep parse tree (${result.treeDepth} levels) - check for excessive nesting`);
+      }
+
+      const rulesInvoked = result.ruleInvocations.map((r: { rule: string; count: number }) => r.rule);
+
+      return {
+        success: true,
+        profile: {
+          parseTimeMs: Math.round(result.parseTimeMs * 100) / 100,
+          tokenCount: result.tokenCount,
+          treeDepth: result.treeDepth,
+          decisionCount: result.decisionCount,
+          ambiguityCount: result.ambiguityCount,
+          contextSensitivityCount: result.contextSensitivityCount,
+          errors: [],
+        },
+        rules: {
+          invoked: rulesInvoked,
+          byFrequency: result.ruleInvocations,
+        },
+        suggestions,
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        profile: {
+          parseTimeMs: 0,
+          tokenCount: 0,
+          treeDepth: 0,
+          decisionCount: 0,
+          ambiguityCount: 0,
+          contextSensitivityCount: 0,
+          errors: [this.formatError(error)],
+        },
+        rules: { invoked: [], byFrequency: [] },
+        suggestions: [],
+        errors: [this.formatError(error)],
+      };
+    } finally {
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  }
+
+  /**
    * Format error message for user display
    */
   private formatError(error: any): string {
