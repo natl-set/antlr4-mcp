@@ -3376,18 +3376,37 @@ export class AntlrAnalyzer {
 
     // Check naming conventions
     for (const rule of analysis.rules) {
-      // Lexer rules should be UPPER_CASE
-      if (rule.type === 'lexer' && !rule.name.startsWith('fragment')) {
-        if (!/^[A-Z][A-Z0-9_]*$/.test(rule.name)) {
+      const isFragment = rule.definition.startsWith('fragment');
+
+      // Lexer rules should start with uppercase (ANTLR requirement)
+      // Fragment rules often use prefixes like F_Xxx which is acceptable
+      if (rule.type === 'lexer') {
+        const startsWithUpper = /^[A-Z]/.test(rule.name);
+        const isStrictUpperCase = /^[A-Z][A-Z0-9_]*$/.test(rule.name);
+
+        if (!startsWithUpper) {
+          // This is an error - ANTLR requires lexer rules to start with uppercase
           issues.push({
             type: 'naming',
-            severity: 'warning',
+            severity: 'error',
             ruleName: rule.name,
             lineNumber: rule.lineNumber,
-            message: `Lexer rule '${rule.name}' should use UPPER_CASE naming`,
-            suggestion: `Consider renaming to ${rule.name.toUpperCase()}`
+            message: `Lexer rule '${rule.name}' must start with uppercase letter`,
+            suggestion: `Rename to ${rule.name.charAt(0).toUpperCase() + rule.name.slice(1)}`
+          });
+        } else if (!isStrictUpperCase && !isFragment) {
+          // Non-fragment lexer rules should ideally be UPPER_CASE
+          // But this is just a style suggestion, not an error
+          issues.push({
+            type: 'naming',
+            severity: 'info',  // Changed from warning to info
+            ruleName: rule.name,
+            lineNumber: rule.lineNumber,
+            message: `Lexer rule '${rule.name}' could use UPPER_CASE naming`,
+            suggestion: `Consider ${rule.name.toUpperCase().replace(/[^A-Z0-9_]/g, '_')}`
           });
         }
+        // Fragment rules with mixed case (like F_HexDigit) are acceptable
       }
 
       // Parser rules should be lowerCamelCase
@@ -3481,10 +3500,11 @@ export class AntlrAnalyzer {
     const infos = issues.filter(i => i.severity === 'info').length;
 
     // Start at 100, deduct for issues
+    // Info-level issues are just suggestions and don't penalize the score
     let score = 100;
-    score -= errors * 15;
+    score -= errors * 20;
     score -= warnings * 5;
-    score -= infos * 1;
+    // Don't deduct for infos - they're just suggestions
     score = Math.max(0, Math.min(100, score));
 
     return {
