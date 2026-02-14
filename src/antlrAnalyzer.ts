@@ -2026,7 +2026,8 @@ export class AntlrAnalyzer {
         }
 
         // Find mode() actions (direct mode switching)
-        const modeMatches = rule.definition.matchAll(/->\s*mode\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)/g);
+        // Handle both: -> mode(X) and -> type(Y), mode(X)
+        const modeMatches = rule.definition.matchAll(/mode\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)/g);
         for (const match of modeMatches) {
           entryPoints.push({
             mode: match[1],
