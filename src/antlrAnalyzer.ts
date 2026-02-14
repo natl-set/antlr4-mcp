@@ -3107,6 +3107,133 @@ export class AntlrAnalyzer {
       suggestion: string;
     }> = [];
 
+    // Helper: Check if pattern uses disjoint character classes
+    // Common disjoint pairs that are safe for nested repetition
+    const isLikelyDisjoint = (pattern: string): boolean => {
+      // Check for references to fragment rules that suggest disjoint sets
+      const fragmentRefs = pattern.match(/\bF_[A-Za-z_]+/g) || [];
+      if (fragmentRefs.length >= 2) {
+        // Check for complementary naming patterns
+        const names = fragmentRefs.map(r => r.replace('F_', '').toLowerCase());
+
+        // Check for common complementary patterns
+        for (let i = 0; i < names.length; i++) {
+          for (let j = i + 1; j < names.length; j++) {
+            const n1 = names[i];
+            const n2 = names[j];
+
+            // Whitespace/NonWhitespace
+            if ((n1.includes('whitespace') && n2.includes('nonwhitespace')) ||
+                (n1.includes('nonwhitespace') && n2.includes('whitespace'))) {
+              return true;
+            }
+
+            // Newline/NonNewline
+            if ((n1.includes('newline') && n2.includes('nonnewline')) ||
+                (n1.includes('nonnewline') && n2.includes('newline'))) {
+              return true;
+            }
+
+            // Digit/NonDigit
+            if ((n1.includes('digit') && n2.includes('nondigit')) ||
+                (n1.includes('nondigit') && n2.includes('digit'))) {
+              return true;
+            }
+
+            // Whitespace and NewlineChar are disjoint (spaces vs \r\n)
+            if ((n1.includes('whitespace') && n2.includes('newline')) ||
+                (n1.includes('newline') && n2.includes('whitespace'))) {
+              return true;
+            }
+
+            // Word and NonWord
+            if ((n1.includes('word') && !n1.includes('nonword') && n2.includes('nonword')) ||
+                (n1.includes('nonword') && n2.includes('word') && !n2.includes('nonword'))) {
+              return true;
+            }
+          }
+        }
+      }
+
+      // Check for character class disjointness patterns
+      // e.g., [ \t]* [\r\n]+ - these are disjoint
+      if (/\[[^\]]*\]\s*[+*?]?\s*\[[^\]]*\][+*?]/.test(pattern)) {
+        const charClasses = pattern.match(/\[[^\]]+\]/g) || [];
+        if (charClasses.length >= 2) {
+          // Common disjoint pairs
+          for (let i = 0; i < charClasses.length; i++) {
+            for (let j = i + 1; j < charClasses.length; j++) {
+              const c1 = charClasses[i];
+              const c2 = charClasses[j];
+
+              // Whitespace [ \t] vs newline [\r\n]
+              const isWhitespace = /\s/.test(c1) || c1.includes(' \\t');
+              const isNewline = /\r|\n/.test(c2) || c2.includes('\\r') || c2.includes('\\n');
+              if ((isWhitespace && isNewline) || (isNewline && isWhitespace)) {
+                return true;
+              }
+            }
+          }
+        }
+      }
+
+      const disjointPatterns = [
+        // Whitespace vs NonWhitespace
+        /Whitespace.*NonWhitespace|NonWhitespace.*Whitespace/i,
+        // Digit vs NonDigit
+        /Digit.*NonDigit|NonDigit.*Digit/i,
+        // Word vs NonWord
+        /Word.*NonWord|NonWord.*Word/i,
+        // Newline vs NonNewline
+        /Newline.*NonNewline|NonNewline.*Newline/i,
+      ];
+
+      return disjointPatterns.some(p => p.test(pattern));
+    };
+
+    // Helper: Check for truly overlapping nested quantifiers
+    const hasOverlappingNested = (pattern: string): boolean => {
+      // Match nested group with quantifier inside, then quantifier outside
+      // e.g., (a+)+, (a*)*, ([x]+)+
+      const nestedMatch = pattern.match(/\(([^)]+)[+*]\)[+*]/);
+      if (!nestedMatch) return false;
+
+      const innerPattern = nestedMatch[1];
+
+      // Check if inner pattern has alternation that could overlap
+      if (innerPattern.includes('|')) {
+        const alts = innerPattern.split('|').map(a => a.trim());
+        // Check for overlapping alternatives
+        for (let i = 0; i < alts.length; i++) {
+          for (let j = i + 1; j < alts.length; j++) {
+            // If both start with same character or one is prefix of other
+            if (alts[i] && alts[j] &&
+                (alts[i][0] === alts[j][0] ||
+                 alts[i].startsWith(alts[j]) ||
+                 alts[j].startsWith(alts[i]))) {
+              return true;
+            }
+          }
+        }
+      }
+
+      // Check for character class followed by same character class
+      const charClassMatch = innerPattern.match(/\[([^\]]+)\]/g);
+      if (charClassMatch && charClassMatch.length >= 1) {
+        // Simple character class repetition is usually fine
+        // But if there are multiple different classes, could be problematic
+        return false;
+      }
+
+      // Single rule reference is usually safe if it's a well-defined fragment
+      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(innerPattern.trim())) {
+        return false; // Single fragment reference - likely safe
+      }
+
+      // Default to flagging for review if we can't determine safety
+      return true;
+    };
+
     for (const rule of analysis.rules) {
       if (rule.type !== 'lexer') continue;
 
@@ -3121,16 +3248,33 @@ export class AntlrAnalyzer {
 
       // Check for ReDoS patterns
 
-      // Pattern 1: Nested quantifiers like (a+)+ or (a*)+
+      // Pattern 1: Nested quantifiers - but check for disjoint patterns
       if (/\([^)]*[+*][^)]*\)[+*]/.test(pattern)) {
-        vulnerabilities.push({
-          ruleName: rule.name,
-          lineNumber: rule.lineNumber,
-          pattern,
-          issue: 'Nested quantifiers detected',
-          severity: 'high',
-          suggestion: 'Avoid nested quantifiers like (a+)+. Use possessive quantifiers or atomic groups if supported.'
-        });
+        // Check if this uses disjoint character classes (safe)
+        if (isLikelyDisjoint(pattern)) {
+          // Skip - likely safe due to disjoint character classes
+        } else if (!hasOverlappingNested(pattern)) {
+          // Likely safe pattern like (F_SingleRule+)*
+          // Only report as low severity info
+          vulnerabilities.push({
+            ruleName: rule.name,
+            lineNumber: rule.lineNumber,
+            pattern,
+            issue: 'Nested quantifiers (likely safe)',
+            severity: 'low',
+            suggestion: 'Pattern uses nested repetition. Verify inner and outer patterns are disjoint for safety.'
+          });
+        } else {
+          // Potentially dangerous
+          vulnerabilities.push({
+            ruleName: rule.name,
+            lineNumber: rule.lineNumber,
+            pattern,
+            issue: 'Nested quantifiers with potential overlap',
+            severity: 'high',
+            suggestion: 'Avoid nested quantifiers like (a+)+. Use possessive quantifiers or atomic groups if supported.'
+          });
+        }
       }
 
       // Pattern 2: Overlapping alternatives like (a|a)+
