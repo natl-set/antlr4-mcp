@@ -17,7 +17,7 @@ An MCP (Model Context Protocol) server that gives Claude AI the ability to read,
 
 ## What is this?
 
-This tool lets Claude AI help you with ANTLR4 grammars by providing 30+ specialized tools. Instead of manually editing grammar files and running the ANTLR compiler repeatedly, Claude can:
+This tool lets Claude AI help you with ANTLR4 grammars by providing 40+ specialized tools. Instead of manually editing grammar files and running the ANTLR compiler repeatedly, Claude can:
 
 - **Find bugs** in your grammar (like using `?` when you need `*`)
 - **Understand structure** across multiple imported grammar files
@@ -44,10 +44,12 @@ This tool lets Claude AI help you with ANTLR4 grammars by providing 30+ speciali
 
 ## Features
 
-- **29+ specialized grammar tools** for analysis, validation, and modification
-- **Smart validation** - Aggregates 17,000+ warnings into 10 actionable items  
+- **40+ specialized grammar tools** for analysis, validation, and modification
+- **Smart validation** - Aggregates 17,000+ warnings into 10 actionable items
 - **Multi-file grammar support** - Load and analyze imported grammars
 - **Pattern detection** - Finds suspicious quantifiers and anti-patterns
+- **Performance analysis** - Detect bottlenecks, benchmark parsing speed
+- **Lexer mode support** - Analyze and manage context-sensitive tokenization
 - **Selective bulk fixes** - Fix specific rules or all detected issues
 - **Context-aware suggestions** - Smart token pattern recommendations
 - **Output limiting** - Handle large grammars without token overflow
@@ -207,12 +209,31 @@ await use_mcp_tool("antlr4", "preview-tokens", {
 - **preview-tokens** - See tokenization results
 - **test-lexer-rule** - Test lexer patterns
 
+### Performance Analysis
+
+- **analyze-bottlenecks** - Detect high-branching rules, tilde negation, missing modes
+- **benchmark-parsing** - Simulated benchmark (quick estimate)
+- **native-benchmark** - Real ANTLR4 Java runtime benchmark (accurate)
+
+### Phase 1 Analysis
+
+- **grammar-metrics** - Branching estimation, complexity, dependencies
+- **detect-redos** - ReDoS vulnerability scanner
+- **check-style** - Style checker with quality scoring
+
+### Lexer Modes
+
+- **analyze-lexer-modes** - Analyze mode structure and rules
+- **analyze-mode-transitions** - Detect mode transition issues
+- **add-lexer-mode** - Add new lexer mode declaration
+- **add-rule-to-mode** - Add rule to specific mode
+
 ### Bulk Operations
 
 - **batch-create-tokens** - Generate multiple tokens
 - **suggest-tokens-from-errors** - Parse error logs
 
-[See all 29+ tools →](FEATURES.md)
+[See all 40+ tools →](docs/FEATURES.md)
 
 ## Real-World Impact
 
@@ -252,8 +273,8 @@ Tested on **Palo Alto firewall configuration grammar** (36 files, 1500+ lines):
 
 ## Documentation
 
-- [Features Overview](FEATURES.md) - All 29+ tools explained
-- [Smart Validation Guide](SMART_VALIDATION.md) - Complete guide with examples
+- [Features Overview](docs/FEATURES.md) - All 40+ tools explained
+- [Smart Validation Guide](docs/SMART_VALIDATION.md) - Complete guide with examples
 - [Tool Specifications](docs/specs/) - Detailed specs for key features
 
 ## Development
@@ -261,6 +282,19 @@ Tested on **Palo Alto firewall configuration grammar** (36 files, 1500+ lines):
 ### Build
 ```bash
 npm run build
+```
+
+### CLI Benchmarking
+
+For accurate performance testing with the real ANTLR4 runtime:
+
+```bash
+# Download ANTLR4 (first time only)
+mkdir -p ~/.local/lib
+curl -L -o ~/.local/lib/antlr-4.13.1-complete.jar https://www.antlr.org/download/antlr-4.13.1-complete.jar
+
+# Run benchmark
+./benchmark-antlr4.sh MyGrammar.g4 start_rule test_input.txt 20
 ```
 
 ### Run Tests
