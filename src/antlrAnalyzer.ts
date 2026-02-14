@@ -3874,6 +3874,139 @@ export class AntlrAnalyzer {
     return maxDepth;
   }
 
+  /**
+   * Benchmark grammar parsing performance with sample input
+   */
+  static benchmarkParsing(
+    grammarContent: string,
+    input: string,
+    options?: {
+      iterations?: number;
+      warmupIterations?: number;
+    }
+  ): {
+    success: boolean;
+    metrics: {
+      totalTokens: number;
+      avgTimeMs: number;
+      minTimeMs: number;
+      maxTimeMs: number;
+      tokensPerSecond: number;
+      iterations: number;
+    };
+    tokens?: TokenInfo[];
+    errors: string[];
+    performanceRating: 'excellent' | 'good' | 'fair' | 'slow';
+    suggestions: string[];
+  } {
+    const iterations = options?.iterations || 10;
+    const warmupIterations = options?.warmupIterations || 3;
+    const errors: string[] = [];
+    const suggestions: string[] = [];
+
+    // First, do a preview to check if input can be tokenized
+    const preview = this.previewTokens(grammarContent, input);
+
+    if (!preview.success) {
+      // Check if there were any tokens produced despite errors
+      const hasPartialMatch = preview.tokens.length > 0;
+
+      return {
+        success: false,
+        metrics: {
+          totalTokens: preview.tokens.length,
+          avgTimeMs: 0,
+          minTimeMs: 0,
+          maxTimeMs: 0,
+          tokensPerSecond: 0,
+          iterations: 0
+        },
+        tokens: preview.tokens.length > 0 ? preview.tokens : undefined,
+        errors: preview.errors.map(e => `Position ${e.position}: ${e.message}`),
+        performanceRating: 'slow',
+        suggestions: hasPartialMatch
+          ? [
+              'Tokenization partially succeeded but had errors',
+              'Check for lexer rules that may not be matching correctly',
+              'Ensure all literal tokens have explicit lexer rules'
+            ]
+          : [
+              'Tokenization failed completely',
+              'Check if grammar has valid lexer rules',
+              'For complex grammars, consider using native ANTLR4 runtime for accurate benchmarking'
+            ]
+      };
+    }
+
+    const totalTokens = preview.tokens.length;
+
+    // Warmup runs (not timed)
+    for (let i = 0; i < warmupIterations; i++) {
+      this.previewTokens(grammarContent, input);
+    }
+
+    // Timed runs
+    const times: number[] = [];
+    for (let i = 0; i < iterations; i++) {
+      const start = process.hrtime.bigint();
+      this.previewTokens(grammarContent, input);
+      const end = process.hrtime.bigint();
+      times.push(Number(end - start) / 1_000_000); // Convert to ms
+    }
+
+    const avgTimeMs = times.reduce((a, b) => a + b, 0) / times.length;
+    const minTimeMs = Math.min(...times);
+    const maxTimeMs = Math.max(...times);
+    const tokensPerSecond = totalTokens > 0 ? (1000 / avgTimeMs) * totalTokens : 0;
+
+    // Determine performance rating
+    let performanceRating: 'excellent' | 'good' | 'fair' | 'slow';
+    if (avgTimeMs < 10) {
+      performanceRating = 'excellent';
+    } else if (avgTimeMs < 50) {
+      performanceRating = 'good';
+    } else if (avgTimeMs < 200) {
+      performanceRating = 'fair';
+    } else {
+      performanceRating = 'slow';
+    }
+
+    // Generate suggestions based on performance
+    if (performanceRating === 'slow') {
+      suggestions.push('Consider running analyze-bottlenecks to identify optimization opportunities');
+      suggestions.push('Check for high-branching rules that may cause prediction overhead');
+
+      const bottlenecks = this.analyzeBottlenecks(grammarContent);
+      if (bottlenecks.metrics.highSeverity > 0) {
+        suggestions.push(`Found ${bottlenecks.metrics.highSeverity} high-severity bottlenecks`);
+      }
+    }
+
+    if (maxTimeMs > avgTimeMs * 3) {
+      suggestions.push('High variance in parse times may indicate JIT warmup or GC pressure');
+    }
+
+    if (preview.warnings.length > 0) {
+      suggestions.push('Address lexer mode warnings for accurate benchmarking');
+    }
+
+    return {
+      success: true,
+      metrics: {
+        totalTokens,
+        avgTimeMs: Math.round(avgTimeMs * 100) / 100,
+        minTimeMs: Math.round(minTimeMs * 100) / 100,
+        maxTimeMs: Math.round(maxTimeMs * 100) / 100,
+        tokensPerSecond: Math.round(tokensPerSecond),
+        iterations
+      },
+      tokens: preview.tokens,
+      errors: [],
+      performanceRating,
+      suggestions
+    };
+  }
+
   static previewTokens(
     grammarContent: string,
     input: string,

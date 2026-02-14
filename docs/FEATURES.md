@@ -1,6 +1,6 @@
 # ANTLR4 MCP Server - Complete Feature List
 
-This document provides a comprehensive overview of all 21 tools available in the ANTLR4 MCP server, organized by functionality.
+This document provides a comprehensive overview of all 40+ tools available in the ANTLR4 MCP server, organized by functionality.
 
 ## 📋 Quick Reference Table
 
@@ -428,4 +428,113 @@ Create structured grammar metrics summary.
 
 ---
 
-**Total: 21 tools** providing comprehensive ANTLR4 grammar analysis, authoring, refactoring, and documentation capabilities.
+## 🔬 Phase 1 Analysis Tools (3)
+
+### grammar-metrics
+Calculate comprehensive grammar metrics including branching estimation and complexity.
+
+**Returns:**
+- Size metrics (total rules, parser rules, lexer rules, fragments)
+- Branching estimation (alternatives per rule, rules with most branching)
+- Complexity score (cyclomatic complexity)
+- Dependency analysis (most referenced rules, orphan rules)
+
+### detect-redos
+Detect ReDoS (Regular Expression Denial of Service) vulnerabilities in lexer patterns.
+
+**Detects:**
+- Nested quantifiers: `(a+)+`, `(a*)*`
+- Overlapping alternatives: `(a|a)+`
+- Alternatives with common prefix
+- Unbounded repetition of broad character classes
+
+### check-style
+Check grammar style and best practices with quality scoring.
+
+**Checks:**
+- Naming conventions (UPPER_CASE for lexer, lowerCamelCase for parser)
+- Missing grammar declaration
+- Unused/orphan rules
+- Overly complex rules
+- Missing documentation on complex rules
+
+**Returns:** Style score (0-100), issues with severity, specific suggestions
+
+---
+
+## 🚀 Performance Analysis Tools (2)
+
+### analyze-bottlenecks
+Analyze grammar for performance bottlenecks and optimization opportunities.
+
+**Detects:**
+- **High-branching rules**: Rules with many alternatives (10+, 20+, 50+)
+- **Tilde negation patterns**: `~NEWLINE`, `~[\r\n]` that could use lexer modes
+- **Missing lexer mode opportunities**: String handling, line-based content
+- **Greedy loop issues**: Nested quantifiers, reluctant patterns
+- **Deep recursion**: Rules with potential stack overflow risk
+- **Token prefix collisions**: Keywords that are prefixes of other keywords
+
+**Returns:** Bottlenecks with severity, specific suggestions, estimated improvement potential
+
+### benchmark-parsing
+Benchmark grammar parsing performance with sample input.
+
+**Measures:**
+- Total tokens produced
+- Average/min/max parse time
+- Tokens per second throughput
+- Performance rating (excellent/good/fair/slow)
+
+**Note:** Uses simulation - for complex grammars, use native ANTLR4 runtime
+
+---
+
+## 🎭 Lexer Mode Tools (8)
+
+### analyze-lexer-modes
+Analyze lexer mode structure and rules.
+
+**Returns:** List of modes, their rules, entry/exit points
+
+### analyze-mode-transitions
+Detect issues with mode transitions.
+
+**Detects:**
+- `pushMode(X)` without corresponding mode X
+- `popMode` in DEFAULT_MODE
+- Modes with no entry points
+- Circular mode transitions
+
+### add-lexer-mode
+Add a new lexer mode declaration.
+
+### add-rule-to-mode
+Add a rule to a specific lexer mode.
+
+### move-rule-to-mode
+Move an existing rule to a different mode.
+
+### list-mode-rules
+List all rules in a specific mode.
+
+### duplicate-mode
+Clone a mode with all its rules.
+
+### create-grammar-template
+Create a new grammar with lexer mode scaffolding.
+
+---
+
+## 📊 Implementation Details
+
+- **Static Analysis**: Intelligent text parsing, not full semantic analysis
+- **ANTLR4 Compliance**: Full support for ANTLR4 grammar syntax and conventions
+- **Performance**: All operations are local with sub-second performance
+- **Reliability**: Duplicate detection and validation prevent data loss
+- **Production-Ready**: Designed for real-world grammar projects
+- **Partial Transactions**: Bulk operations succeed partially on individual rule errors
+
+---
+
+**Total: 40+ tools** providing comprehensive ANTLR4 grammar analysis, authoring, refactoring, documentation, and performance optimization capabilities.

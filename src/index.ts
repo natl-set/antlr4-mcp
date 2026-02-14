@@ -2461,6 +2461,61 @@ Common use cases:
     },
   },
   {
+    name: 'benchmark-parsing',
+    description: `Benchmark grammar parsing performance with sample input.
+
+**When to use:** Performance testing, comparing grammar versions, optimization validation.
+
+**Measures:**
+- Total tokens produced
+- Average/min/max parse time (ms)
+- Tokens per second throughput
+- Performance rating (excellent/good/fair/slow)
+
+**Features:**
+- Warmup iterations to account for JIT
+- Multiple iterations for statistical accuracy
+- Performance rating based on parse time
+- Optimization suggestions for slow grammars
+
+**Parameters:**
+- grammar_content or from_file: The grammar to test
+- input: Sample input text to parse
+- iterations: Number of timed iterations (default: 10)
+- warmup_iterations: Warmup runs before timing (default: 3)
+
+**Example:**
+  from_file: "MyGrammar.g4"
+  input: "x = 42 + y * 10"
+  iterations: 20`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        grammar_content: {
+          type: 'string',
+          description: 'The ANTLR4 grammar file content',
+        },
+        from_file: {
+          type: 'string',
+          description: 'Optional: path to a grammar file to read',
+        },
+        input: {
+          type: 'string',
+          description: 'Sample input text to parse',
+        },
+        iterations: {
+          type: 'number',
+          description: 'Number of timed iterations (default: 10)',
+        },
+        warmup_iterations: {
+          type: 'number',
+          description: 'Warmup runs before timing (default: 3)',
+        },
+      },
+      required: ['grammar_content', 'input'],
+    },
+  },
+  {
     name: 'move-rule',
     description: `Move an existing rule to a new position relative to another rule.
 
@@ -5772,6 +5827,96 @@ ${writeResult.message}`;
 
           if (result.bottlenecks.length === 0) {
             output += `✅ No significant performance bottlenecks detected.\n`;
+          }
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: output,
+              } as TextContent,
+            ],
+            isError: false,
+          };
+        }
+
+        case 'benchmark-parsing': {
+          const inputText = (argsObj.input as string) || '';
+          const iterations = (argsObj.iterations as number) || 10;
+          const warmupIterations = (argsObj.warmup_iterations as number) || 3;
+
+          if (!inputText) {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: 'Error: input parameter is required for benchmarking',
+                } as TextContent,
+              ],
+              isError: true,
+            };
+          }
+
+          const result = AntlrAnalyzer.benchmarkParsing(grammarContent, inputText, {
+            iterations,
+            warmupIterations
+          });
+
+          let output = '# Parsing Benchmark Results\n\n';
+
+          if (!result.success) {
+            output += `❌ **Benchmark Failed**\n\n`;
+            output += `**Errors:**\n`;
+            for (const err of result.errors) {
+              output += `- ${err}\n`;
+            }
+            return {
+              content: [{ type: 'text', text: output } as TextContent],
+              isError: true,
+            };
+          }
+
+          // Performance rating with emoji
+          const ratingEmoji = {
+            excellent: '🚀',
+            good: '✅',
+            fair: '⚠️',
+            slow: '🐌'
+          };
+
+          output += `**Performance Rating:** ${ratingEmoji[result.performanceRating]} ${result.performanceRating.toUpperCase()}\n\n`;
+
+          // Metrics table
+          output += `## Metrics\n\n`;
+          output += `| Metric | Value |\n`;
+          output += `|--------|-------|\n`;
+          output += `| Input Length | ${inputText.length} chars |\n`;
+          output += `| Total Tokens | ${result.metrics.totalTokens} |\n`;
+          output += `| Avg Parse Time | ${result.metrics.avgTimeMs} ms |\n`;
+          output += `| Min Parse Time | ${result.metrics.minTimeMs} ms |\n`;
+          output += `| Max Parse Time | ${result.metrics.maxTimeMs} ms |\n`;
+          output += `| Throughput | ${result.metrics.tokensPerSecond.toLocaleString()} tokens/sec |\n`;
+          output += `| Iterations | ${result.metrics.iterations} |\n\n`;
+
+          // Token sample
+          if (result.tokens && result.tokens.length > 0) {
+            output += `## Token Sample (first 10)\n\n`;
+            for (let i = 0; i < Math.min(10, result.tokens.length); i++) {
+              const token = result.tokens[i];
+              output += `${i + 1}. \`${token.type}\`: "${token.value.substring(0, 30)}${token.value.length > 30 ? '...' : ''}"\n`;
+            }
+            if (result.tokens.length > 10) {
+              output += `\n... and ${result.tokens.length - 10} more tokens\n`;
+            }
+            output += `\n`;
+          }
+
+          // Suggestions
+          if (result.suggestions.length > 0) {
+            output += `## Optimization Suggestions\n\n`;
+            for (const suggestion of result.suggestions) {
+              output += `- 💡 ${suggestion}\n`;
+            }
           }
 
           return {
