@@ -3677,7 +3677,8 @@ export class AntlrAnalyzer {
     const literalKeywords: Array<{ name: string; pattern: string; line: number }> = [];
 
     for (const rule of keywordRules) {
-      const literalMatch = rule.definition.match(/^'([^']+)'/);
+      // Match both single and double quoted literals (anywhere in definition)
+      const literalMatch = rule.definition.match(/'([^']+)'/) || rule.definition.match(/"([^"]+)"/);
       if (literalMatch) {
         literalKeywords.push({ name: rule.name, pattern: literalMatch[1], line: rule.lineNumber });
       }
@@ -3815,10 +3816,13 @@ export class AntlrAnalyzer {
     const stringRules = analysis.rules.filter(r =>
       r.definition.includes('QUOTE') ||
       r.definition.includes("'\"'") ||
-      r.definition.match(/STRING|TEXT/)
+      r.name.match(/STRING|TEXT/i) ||
+      r.definition.match(/["']~["']/) ||  // String with tilde negation
+      r.definition.match(/"[^"]*"/) ||    // Contains double-quoted literal
+      r.definition.match(/'[^']*'/)       // Contains single-quoted literal
     );
 
-    if (stringRules.length > 2 && existingModes.length === 0) {
+    if (stringRules.length > 0 && existingModes.length === 0) {
       opportunities.push({
         severity: 'medium',
         description: 'Grammar handles string/quoted content without lexer modes',
@@ -3848,10 +3852,16 @@ export class AntlrAnalyzer {
     depth: number = 0
   ): number {
     if (depth > 10) return depth; // Prevent infinite loops
-    if (visited.has(ruleName)) return depth;
 
     const rule = rules.find(r => r.name === ruleName);
     if (!rule) return depth;
+
+    // Check for direct self-reference (immediate recursion)
+    if (rule.referencedRules.includes(ruleName) && depth === 0) {
+      return 4; // Self-reference counts as depth 4 (significant)
+    }
+
+    if (visited.has(ruleName)) return depth;
 
     visited.add(ruleName);
     let maxDepth = depth;
