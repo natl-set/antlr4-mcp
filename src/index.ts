@@ -1899,6 +1899,406 @@ Returns:
     },
   },
   {
+    name: 'analyze-lexer-modes',
+    description: `Analyze lexer mode structure in ANTLR4 grammars.
+
+**When to use:** Understanding mode-based tokenization, debugging mode transitions, documenting mode structure.
+
+**Lexer modes** allow context-sensitive tokenization by switching between different sets of lexer rules.
+Common use cases:
+- String interpolation (switching modes inside strings)
+- Nested comments
+- Template parsing
+- Context-specific keywords
+
+**Features:**
+- Lists all defined modes with their rules
+- Identifies mode entry points (pushMode actions)
+- Identifies mode exit points (popMode actions)
+- Detects common issues (undefined modes, unreachable modes, popMode in DEFAULT_MODE)
+
+**Returns:**
+- modes: List of modes with their rules and line numbers
+- entryPoints: Rules that push to each mode
+- exitPoints: Rules that pop from each mode
+- issues: Problems detected (undefined modes, empty modes, etc.)
+
+**Example usage:**
+  from_file: "MyLexer.g4"`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        grammar_content: {
+          type: 'string',
+          description: 'The ANTLR4 grammar file content',
+        },
+        from_file: {
+          type: 'string',
+          description: 'Optional: path to a grammar file to read',
+        },
+      },
+      required: ['grammar_content'],
+    },
+  },
+  {
+    name: 'analyze-mode-transitions',
+    description: `Analyze mode transition graph and detect issues in ANTLR4 lexer modes.
+
+**When to use:** Debugging mode switching logic, ensuring balanced push/pop, detecting circular transitions.
+
+**Features:**
+- Builds complete mode transition graph
+- Detects circular mode transitions
+- Checks for balanced pushMode/popMode usage
+- Identifies modes with no exit points
+- Suggests improvements for mode structure
+
+**Returns:**
+- transitions: List of all mode transitions (from, to, via action, rule)
+- issues: Problems detected (circular transitions, unbalanced push/pop)
+- suggestions: Recommendations for improving mode structure
+
+**Example usage:**
+  from_file: "MyLexer.g4"`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        grammar_content: {
+          type: 'string',
+          description: 'The ANTLR4 grammar file content',
+        },
+        from_file: {
+          type: 'string',
+          description: 'Optional: path to a grammar file to read',
+        },
+      },
+      required: ['grammar_content'],
+    },
+  },
+  {
+    name: 'add-lexer-mode',
+    description: `Add a new lexer mode declaration to an ANTLR4 grammar.
+
+**When to use:** Creating new modes for context-sensitive tokenization.
+
+**Features:**
+- Adds "mode MODE_NAME;" declaration
+- Optional positioning with insert_after
+- Validates mode name format
+- Prevents duplicate mode names
+
+**Example - Add mode after specific rule:**
+  mode_name: "STRING_MODE"
+  insert_after: "STRING"
+  write_to_file: true
+
+**Example - Add mode at end of grammar:**
+  mode_name: "TEMPLATE_MODE"
+  write_to_file: true`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        grammar_content: {
+          type: 'string',
+          description: 'The ANTLR4 grammar file content',
+        },
+        from_file: {
+          type: 'string',
+          description: 'Optional: path to a grammar file to read. Required if using write_to_file.',
+        },
+        mode_name: {
+          type: 'string',
+          description: 'Name of the new mode (UPPER_CASE recommended)',
+        },
+        insert_after: {
+          type: 'string',
+          description: 'Optional: Insert mode declaration after this rule name',
+        },
+        write_to_file: {
+          type: 'boolean',
+          description: 'If true, writes modified grammar back to from_file',
+        },
+        output_mode: {
+          type: 'string',
+          enum: ['full', 'diff', 'none'],
+          description: 'Output format: "full", "diff", or "none"',
+        },
+      },
+      required: ['grammar_content', 'mode_name'],
+    },
+  },
+  {
+    name: 'add-rule-to-mode',
+    description: `Add a lexer rule to a specific mode in an ANTLR4 grammar.
+
+**When to use:** Adding tokens that only apply in specific lexical contexts.
+
+**Features:**
+- Places rule in the correct mode section
+- Validates mode exists
+- Supports all lexer rule options (skip, channel, fragment)
+- Auto-sorts within the mode
+
+**Example - Add rule to STRING_MODE:**
+  rule_name: "INTERPOLATION_START"
+  pattern: "\\\\{"
+  mode_name: "STRING_MODE"
+  write_to_file: true
+
+**Example - Add with pushMode action:**
+  rule_name: "INTERPOLATION_START"
+  pattern: "\\\\{"
+  mode_name: "STRING_MODE"
+  action: "pushMode(EXPRESSION_MODE)"
+  write_to_file: true`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        grammar_content: {
+          type: 'string',
+          description: 'The ANTLR4 grammar file content',
+        },
+        from_file: {
+          type: 'string',
+          description: 'Optional: path to a grammar file to read. Required if using write_to_file.',
+        },
+        rule_name: {
+          type: 'string',
+          description: 'Name of the lexer rule (UPPER_CASE)',
+        },
+        pattern: {
+          type: 'string',
+          description: 'The lexer pattern',
+        },
+        mode_name: {
+          type: 'string',
+          description: 'Name of the mode to add the rule to',
+        },
+        fragment: {
+          type: 'boolean',
+          description: 'If true, marks rule as fragment',
+        },
+        skip: {
+          type: 'boolean',
+          description: 'If true, adds "-> skip" directive',
+        },
+        channel: {
+          type: 'string',
+          description: 'Channel name to route tokens',
+        },
+        action: {
+          type: 'string',
+          description: 'Lexer action (e.g., "pushMode(MODE)", "popMode", "type(TYPE)")',
+        },
+        write_to_file: {
+          type: 'boolean',
+          description: 'If true, writes modified grammar back to from_file',
+        },
+        output_mode: {
+          type: 'string',
+          enum: ['full', 'diff', 'none'],
+          description: 'Output format: "full", "diff", or "none"',
+        },
+      },
+      required: ['grammar_content', 'rule_name', 'pattern', 'mode_name'],
+    },
+  },
+  {
+    name: 'move-rule-to-mode',
+    description: `Move an existing lexer rule to a different mode.
+
+**When to use:** Reorganizing lexer rules, fixing mode placement, refactoring grammar structure.
+
+**Features:**
+- Moves lexer rules between modes
+- Preserves rule definition exactly
+- Validates source rule exists and is a lexer rule
+- Validates target mode exists
+
+**Example - Move rule to STRING_MODE:**
+  rule_name: "STRING_CONTENT"
+  target_mode: "STRING_MODE"
+  write_to_file: true
+
+**Note:** Parser rules cannot be moved to modes (they don't have mode context).`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        grammar_content: {
+          type: 'string',
+          description: 'The ANTLR4 grammar file content',
+        },
+        from_file: {
+          type: 'string',
+          description: 'Optional: path to a grammar file to read',
+        },
+        rule_name: {
+          type: 'string',
+          description: 'Name of the lexer rule to move',
+        },
+        target_mode: {
+          type: 'string',
+          description: 'Name of the mode to move the rule to',
+        },
+        write_to_file: {
+          type: 'boolean',
+          description: 'If true, writes modified grammar back to from_file',
+        },
+        output_mode: {
+          type: 'string',
+          enum: ['full', 'diff', 'none'],
+          description: 'Output format: "full", "diff", or "none"',
+        },
+      },
+      required: ['grammar_content', 'rule_name', 'target_mode'],
+    },
+  },
+  {
+    name: 'list-mode-rules',
+    description: `List all lexer rules in a specific mode.
+
+**When to use:** Quick inspection of mode contents, debugging mode issues, understanding mode structure.
+
+**Returns:**
+- List of rules with names, patterns, and line numbers
+- Total count of rules in the mode
+
+**Example - List rules in STRING_MODE:**
+  mode_name: "STRING_MODE"
+
+**Example - List rules in DEFAULT_MODE:**
+  mode_name: "DEFAULT_MODE"`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        grammar_content: {
+          type: 'string',
+          description: 'The ANTLR4 grammar file content',
+        },
+        from_file: {
+          type: 'string',
+          description: 'Optional: path to a grammar file to read',
+        },
+        mode_name: {
+          type: 'string',
+          description: 'Name of the mode to list rules from',
+        },
+      },
+      required: ['grammar_content', 'mode_name'],
+    },
+  },
+  {
+    name: 'duplicate-mode',
+    description: `Duplicate a lexer mode with all its rules.
+
+**When to use:** Creating similar modes, refactoring mode structure, creating mode templates.
+
+**Features:**
+- Copies all rules from source mode to new mode
+- Optional prefix for cloned rule names
+- Creates new mode declaration automatically
+
+**Example - Duplicate mode without prefix:**
+  source_mode: "STRING_MODE"
+  new_mode: "TEMPLATE_MODE"
+
+**Example - Duplicate with rule prefix:**
+  source_mode: "STRING_MODE"
+  new_mode: "INTERPOLATION_MODE"
+  prefix_rules: "INTERP_"
+  # Rules will be named: INTERP_STRING_CONTENT, etc.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        grammar_content: {
+          type: 'string',
+          description: 'The ANTLR4 grammar file content',
+        },
+        from_file: {
+          type: 'string',
+          description: 'Optional: path to a grammar file to read',
+        },
+        source_mode: {
+          type: 'string',
+          description: 'Name of the mode to duplicate',
+        },
+        new_mode: {
+          type: 'string',
+          description: 'Name for the new mode',
+        },
+        prefix_rules: {
+          type: 'string',
+          description: 'Optional prefix for cloned rule names',
+        },
+        write_to_file: {
+          type: 'boolean',
+          description: 'If true, writes modified grammar back to from_file',
+        },
+        output_mode: {
+          type: 'string',
+          enum: ['full', 'diff', 'none'],
+          description: 'Output format: "full", "diff", or "none"',
+        },
+      },
+      required: ['grammar_content', 'source_mode', 'new_mode'],
+    },
+  },
+  {
+    name: 'create-grammar-template',
+    description: `Create a new ANTLR4 grammar from scratch with optional mode structure.
+
+**When to use:** Starting a new grammar project, scaffolding grammar structure, creating grammar templates.
+
+**Features:**
+- Creates lexer, parser, or combined grammar
+- Optionally includes boilerplate rules (WS, ID, NUMBER, STRING, comments)
+- Adds specified modes with placeholder comments
+- Ready-to-use structure for common patterns
+
+**Example - Simple lexer grammar:**
+  grammar_name: "MyLexer"
+  type: "lexer"
+
+**Example - Lexer with modes:**
+  grammar_name: "TemplateLexer"
+  type: "lexer"
+  modes: ["STRING_MODE", "COMMENT_MODE", "INTERPOLATION_MODE"]
+  include_boilerplate: true
+
+**Example - Combined grammar:**
+  grammar_name: "Calculator"
+  type: "combined"
+  include_boilerplate: true`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        grammar_content: {
+          type: 'string',
+          description: 'Placeholder - not required for this tool',
+        },
+        grammar_name: {
+          type: 'string',
+          description: 'Name for the new grammar',
+        },
+        type: {
+          type: 'string',
+          enum: ['lexer', 'parser', 'combined'],
+          description: 'Type of grammar to create (default: lexer)',
+        },
+        modes: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'List of mode names to include in the grammar',
+        },
+        include_boilerplate: {
+          type: 'boolean',
+          description: 'Include common rules like WS, ID, NUMBER, STRING (default: true)',
+        },
+      },
+      required: ['grammar_name'],
+    },
+  },
+  {
     name: 'move-rule',
     description: `Move an existing rule to a new position relative to another rule.
 
@@ -2296,21 +2696,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             case 'overview':
               helpText = `# ANTLR4 MCP Server - Tool Overview
 
-This server provides 29 specialized tools for working with ANTLR4 grammars, organized into 5 categories:
+This server provides 37 specialized tools for working with ANTLR4 grammars, organized into 5 categories:
 
-## 📊 Analysis & Inspection (8 tools)
-Extract structure, validate syntax, find rules, compare grammars, detect ambiguities. **Now with multi-file support!**
+## 📊 Analysis & Inspection (11 tools)
+Extract structure, validate syntax, find rules, compare grammars, detect ambiguities. **Now with multi-file and lexer mode support!**
 
-Tools: analyze-grammar ⭐, validate-grammar ⭐, list-rules, find-rule, format-grammar, get-suggestions, compare-grammars, analyze-ambiguities
+Tools: analyze-grammar ⭐, validate-grammar ⭐, list-rules, find-rule, format-grammar, get-suggestions, compare-grammars, analyze-ambiguities, analyze-lexer-modes ⭐, analyze-mode-transitions, list-mode-rules
 
-**When to use:** Exploring grammars, understanding structure, finding issues, analyzing dependencies, detecting ambiguities. Use load_imports: true for multi-file projects.
+**When to use:** Exploring grammars, understanding structure, finding issues, analyzing dependencies, detecting ambiguities, understanding lexer modes. Use load_imports: true for multi-file projects.
 
-## ✏️ Authoring & Modification (11 tools)
-Add, remove, update, and rename rules with automatic sorting and duplicate prevention.
+## ✏️ Authoring & Modification (16 tools)
+Add, remove, update, and rename rules with automatic sorting and duplicate prevention. **Now with lexer mode support!**
 
-Tools: add-lexer-rule, add-parser-rule, remove-rule, update-rule, rename-rule, add-lexer-rules, add-parser-rules, add-rules, add-tokens-with-template, generate-tokens-from-pattern, suggest-tokens-from-errors
+Tools: add-lexer-rule, add-parser-rule, remove-rule, update-rule, rename-rule, add-lexer-rules, add-parser-rules, add-rules, add-tokens-with-template, generate-tokens-from-pattern, suggest-tokens-from-errors, add-lexer-mode, add-rule-to-mode, move-rule-to-mode, duplicate-mode, create-grammar-template
 
-**When to use:** Creating new grammars, adding rules, modifying definitions, refactoring names, batch token generation.
+**When to use:** Creating new grammars, adding rules, modifying definitions, refactoring names, batch token generation, managing lexer modes, scaffolding grammar structure.
 
 ## 🔧 Refactoring & Optimization (7 tools)
 Find rule usages, analyze complexity/dependencies, extract fragments, merge/inline/sort/move rules.
@@ -2335,7 +2735,16 @@ Tools: export-as-markdown, generate-summary
 
 ---
 
-**🚀 NEW FEATURES (v2.2):**
+**🚀 NEW FEATURES (v2.3):**
+- **Lexer Mode Support**: Full support for analyzing and editing lexer modes
+  - analyze-lexer-modes: Analyze mode structure, entry/exit points, detect issues
+  - analyze-mode-transitions: Build transition graph, detect circular transitions
+  - list-mode-rules: Quick view of rules in a specific mode
+  - add-lexer-mode: Add new mode declarations
+  - add-rule-to-mode: Add rules to specific modes
+  - move-rule-to-mode: Move existing rules between modes
+  - duplicate-mode: Clone a mode with all its rules
+- **Grammar Templates**: create-grammar-template scaffolds new grammars with mode structure
 - **tokenVocab fix**: validate-grammar now correctly resolves lexer tokens from tokenVocab
 - **Multi-file rename**: rename-rule supports load_imports for cross-file renaming
 - **from_file fallback**: Tools automatically read from from_file when grammar_content is empty
@@ -4515,6 +4924,407 @@ ${writeResult.message}`;
           };
         }
 
+        case 'analyze-lexer-modes': {
+          const result = AntlrAnalyzer.analyzeLexerModes(grammarContent);
+
+          let output = '';
+
+          // Summary header
+          output += `# Lexer Mode Analysis\n\n`;
+
+          // List modes
+          if (result.modes.length > 0) {
+            output += `## Modes (${result.modes.length})\n\n`;
+            for (const mode of result.modes) {
+              output += `### ${mode.name}`;
+              if (mode.lineNumber > 0) {
+                output += ` (line ${mode.lineNumber})`;
+              }
+              output += `\n`;
+              if (mode.rules.length > 0) {
+                output += `Rules: ${mode.rules.join(', ')}\n`;
+              } else {
+                output += `Rules: (none)\n`;
+              }
+              output += `\n`;
+            }
+          } else {
+            output += `No lexer modes defined. Grammar uses DEFAULT_MODE only.\n\n`;
+          }
+
+          // Entry points
+          if (result.entryPoints.length > 0) {
+            output += `## Entry Points (pushMode actions)\n\n`;
+            // Group by target mode
+            const byMode = new Map<string, typeof result.entryPoints>();
+            for (const entry of result.entryPoints) {
+              if (!byMode.has(entry.mode)) {
+                byMode.set(entry.mode, []);
+              }
+              byMode.get(entry.mode)!.push(entry);
+            }
+            for (const [mode, entries] of byMode) {
+              output += `**${mode}**:\n`;
+              for (const entry of entries) {
+                output += `  - ${entry.fromRule} → ${entry.action}\n`;
+              }
+              output += `\n`;
+            }
+          }
+
+          // Exit points
+          if (result.exitPoints.length > 0) {
+            output += `## Exit Points (popMode actions)\n\n`;
+            // Group by source mode
+            const byMode = new Map<string, typeof result.exitPoints>();
+            for (const exit of result.exitPoints) {
+              if (!byMode.has(exit.mode)) {
+                byMode.set(exit.mode, []);
+              }
+              byMode.get(exit.mode)!.push(exit);
+            }
+            for (const [mode, exits] of byMode) {
+              output += `**${mode}**:\n`;
+              for (const exit of exits) {
+                output += `  - ${exit.fromRule} → ${exit.action}\n`;
+              }
+              output += `\n`;
+            }
+          }
+
+          // Issues
+          if (result.issues.length > 0) {
+            output += `## Issues\n\n`;
+            const errors = result.issues.filter(i => i.type === 'error');
+            const warnings = result.issues.filter(i => i.type === 'warning');
+
+            if (errors.length > 0) {
+              output += `🔴 ERRORS:\n`;
+              for (const issue of errors) {
+                output += `  - ${issue.message}`;
+                if (issue.ruleName) output += ` (rule: ${issue.ruleName})`;
+                output += `\n`;
+              }
+              output += `\n`;
+            }
+
+            if (warnings.length > 0) {
+              output += `⚠️  WARNINGS:\n`;
+              for (const issue of warnings) {
+                output += `  - ${issue.message}`;
+                if (issue.ruleName) output += ` (rule: ${issue.ruleName})`;
+                output += `\n`;
+              }
+              output += `\n`;
+            }
+          } else {
+            output += `✅ No issues detected.\n`;
+          }
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: output,
+              } as TextContent,
+            ],
+            isError: result.issues.some(i => i.type === 'error'),
+          };
+        }
+
+        case 'analyze-mode-transitions': {
+          const result = AntlrAnalyzer.analyzeModeTransitions(grammarContent);
+
+          let output = '';
+
+          output += `# Mode Transition Analysis\n\n`;
+
+          // Transition graph
+          if (result.transitions.length > 0) {
+            output += `## Transition Graph\n\n`;
+            output += `\`\`\`\n`;
+            // Group transitions by source mode
+            const byFromMode = new Map<string, typeof result.transitions>();
+            for (const t of result.transitions) {
+              if (!byFromMode.has(t.from)) {
+                byFromMode.set(t.from, []);
+              }
+              byFromMode.get(t.from)!.push(t);
+            }
+            for (const [fromMode, transitions] of byFromMode) {
+              output += `${fromMode}:\n`;
+              for (const t of transitions) {
+                output += `  → ${t.to} (via ${t.rule}: ${t.via})\n`;
+              }
+            }
+            output += `\`\`\`\n\n`;
+          } else {
+            output += `No mode transitions found.\n\n`;
+          }
+
+          // Issues
+          if (result.issues.length > 0) {
+            output += `## Issues\n\n`;
+            const errors = result.issues.filter(i => i.type === 'error');
+            const warnings = result.issues.filter(i => i.type === 'warning');
+
+            if (errors.length > 0) {
+              output += `🔴 ERRORS:\n`;
+              for (const issue of errors) {
+                output += `  - ${issue.message}\n`;
+              }
+              output += `\n`;
+            }
+
+            if (warnings.length > 0) {
+              output += `⚠️  WARNINGS:\n`;
+              for (const issue of warnings) {
+                output += `  - ${issue.message}\n`;
+              }
+              output += `\n`;
+            }
+          } else {
+            output += `✅ No issues detected.\n\n`;
+          }
+
+          // Suggestions
+          if (result.suggestions.length > 0) {
+            output += `## Suggestions\n\n`;
+            for (const suggestion of result.suggestions) {
+              output += `💡 ${suggestion}\n`;
+            }
+          }
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: output,
+              } as TextContent,
+            ],
+            isError: result.issues.some(i => i.type === 'error'),
+          };
+        }
+
+        case 'add-lexer-mode': {
+          const modeName = (argsObj.mode_name as string) || '';
+          const insertAfter = (argsObj.insert_after as string) || undefined;
+          const writeToFile = (argsObj.write_to_file as boolean) || false;
+          const outputMode = (argsObj.output_mode as string) || 'diff';
+
+          const result = AntlrAnalyzer.addLexerMode(grammarContent, modeName, insertAfter);
+
+          let output = result.message + '\n\n';
+
+          // Handle file writing
+          if (writeToFile && argsObj.from_file) {
+            const writeResult = safeWriteFile(argsObj.from_file as string, result.grammar);
+            output += writeResult.message + '\n';
+          }
+
+          // Output format
+          if (outputMode === 'diff') {
+            const diff = generateUnifiedDiff(grammarContent, result.grammar, 'grammar.g4');
+            output += `\n${diff}`;
+          } else if (outputMode === 'full') {
+            output += `\n${result.grammar}`;
+          }
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: output,
+              } as TextContent,
+            ],
+            isError: !result.success,
+          };
+        }
+
+        case 'add-rule-to-mode': {
+          const ruleName = (argsObj.rule_name as string) || '';
+          const pattern = (argsObj.pattern as string) || '';
+          const modeName = (argsObj.mode_name as string) || '';
+          const fragment = (argsObj.fragment as boolean) || false;
+          const skip = (argsObj.skip as boolean) || false;
+          const channel = (argsObj.channel as string) || undefined;
+          const action = (argsObj.action as string) || undefined;
+          const writeToFile = (argsObj.write_to_file as boolean) || false;
+          const outputMode = (argsObj.output_mode as string) || 'diff';
+
+          const result = AntlrAnalyzer.addRuleToMode(
+            grammarContent,
+            ruleName,
+            pattern,
+            modeName,
+            { fragment, skip, channel, action }
+          );
+
+          let output = result.message + '\n\n';
+
+          // Handle file writing
+          if (writeToFile && argsObj.from_file) {
+            const writeResult = safeWriteFile(argsObj.from_file as string, result.grammar);
+            output += writeResult.message + '\n';
+          }
+
+          // Output format
+          if (outputMode === 'diff') {
+            const diff = generateUnifiedDiff(grammarContent, result.grammar, 'grammar.g4');
+            output += `\n${diff}`;
+          } else if (outputMode === 'full') {
+            output += `\n${result.grammar}`;
+          }
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: output,
+              } as TextContent,
+            ],
+            isError: !result.success,
+          };
+        }
+
+        case 'move-rule-to-mode': {
+          const ruleName = (argsObj.rule_name as string) || '';
+          const targetMode = (argsObj.target_mode as string) || '';
+          const writeToFile = (argsObj.write_to_file as boolean) || false;
+          const outputMode = (argsObj.output_mode as string) || 'diff';
+
+          const result = AntlrAnalyzer.moveRuleToMode(grammarContent, ruleName, targetMode);
+
+          let output = result.message + '\n\n';
+
+          if (writeToFile && argsObj.from_file) {
+            const writeResult = safeWriteFile(argsObj.from_file as string, result.grammar);
+            output += writeResult.message + '\n';
+          }
+
+          if (outputMode === 'diff') {
+            const diff = generateUnifiedDiff(grammarContent, result.grammar, 'grammar.g4');
+            output += `\n${diff}`;
+          } else if (outputMode === 'full') {
+            output += `\n${result.grammar}`;
+          }
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: output,
+              } as TextContent,
+            ],
+            isError: !result.success,
+          };
+        }
+
+        case 'list-mode-rules': {
+          const modeName = (argsObj.mode_name as string) || '';
+
+          const result = AntlrAnalyzer.listModeRules(grammarContent, modeName);
+
+          let output = '';
+
+          if (!result.success) {
+            output = `❌ ${result.message}\n`;
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: output,
+                } as TextContent,
+              ],
+              isError: true,
+            };
+          }
+
+          output += `# Mode: ${result.mode}\n\n`;
+          output += `${result.message}\n\n`;
+
+          if (result.rules.length > 0) {
+            output += `| Rule | Pattern | Line |\n`;
+            output += `|------|---------|------|\n`;
+            for (const rule of result.rules) {
+              output += `| ${rule.name} | \`${rule.pattern}\` | ${rule.lineNumber} |\n`;
+            }
+          } else {
+            output += `No rules in this mode.\n`;
+          }
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: output,
+              } as TextContent,
+            ],
+          };
+        }
+
+        case 'duplicate-mode': {
+          const sourceMode = (argsObj.source_mode as string) || '';
+          const newMode = (argsObj.new_mode as string) || '';
+          const prefixRules = (argsObj.prefix_rules as string) || undefined;
+          const writeToFile = (argsObj.write_to_file as boolean) || false;
+          const outputMode = (argsObj.output_mode as string) || 'diff';
+
+          const result = AntlrAnalyzer.duplicateMode(grammarContent, sourceMode, newMode, { prefixRules });
+
+          let output = result.message + '\n\n';
+
+          if (writeToFile && argsObj.from_file) {
+            const writeResult = safeWriteFile(argsObj.from_file as string, result.grammar);
+            output += writeResult.message + '\n';
+          }
+
+          if (outputMode === 'diff') {
+            const diff = generateUnifiedDiff(grammarContent, result.grammar, 'grammar.g4');
+            output += `\n${diff}`;
+          } else if (outputMode === 'full') {
+            output += `\n${result.grammar}`;
+          }
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: output,
+              } as TextContent,
+            ],
+            isError: !result.success,
+          };
+        }
+
+        case 'create-grammar-template': {
+          const grammarName = (argsObj.grammar_name as string) || '';
+          const type = (argsObj.type as 'lexer' | 'parser' | 'combined') || 'lexer';
+          const modes = (argsObj.modes as string[]) || [];
+          const includeBoilerplate = (argsObj.include_boilerplate as boolean) ?? true;
+
+          const result = AntlrAnalyzer.createGrammarTemplate(grammarName, {
+            type,
+            modes,
+            includeBoilerplate
+          });
+
+          let output = result.message + '\n\n';
+          output += '```antlr4\n';
+          output += result.grammar;
+          output += '```\n';
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: output,
+              } as TextContent,
+            ],
+            isError: !result.success,
+          };
+        }
+
         case 'move-rule': {
           const ruleName = (argsObj.rule_name as string) || '';
           const position = (argsObj.position as 'before' | 'after') || 'before';
@@ -4966,11 +5776,12 @@ async function main() {
       await server.connect(transport);
 
       // Display startup message
-      console.error('\n🎯 antlr4-mcp v1.0.0 loaded with 29+ tools!');
+      console.error('\n🎯 antlr4-mcp v1.0.0 loaded with 37+ tools!');
       console.error('📚 Key capabilities:');
       console.error('  • Smart validation - Aggregate 17,000+ warnings into actionable items');
       console.error('  • Quantifier detection - Find ? that should be *');
       console.error('  • Multi-file analysis - Track imports across grammar files');
+      console.error('  • Lexer modes - Full support for context-sensitive tokenization');
       console.error('  • Safe editing - Diff mode, no data loss');
       console.error('\n💡 Tip: Ask for "help" tool to see all capabilities!\n');
     });
@@ -4992,11 +5803,12 @@ async function main() {
     await server.connect(transport);
 
     // Display startup message
-    console.error('\n🎯 antlr4-mcp v1.0.0 loaded with 29+ tools!');
+    console.error('\n🎯 antlr4-mcp v1.0.0 loaded with 37+ tools!');
     console.error('📚 Key capabilities:');
     console.error('  • Smart validation - Aggregate 17,000+ warnings into actionable items');
     console.error('  • Quantifier detection - Find ? that should be *');
     console.error('  • Multi-file analysis - Track imports across grammar files');
+    console.error('  • Lexer modes - Full support for context-sensitive tokenization');
     console.error('  • Safe editing - Diff mode, no data loss');
     console.error('\n💡 Tip: Ask for "help" tool to see all capabilities!\n');
 

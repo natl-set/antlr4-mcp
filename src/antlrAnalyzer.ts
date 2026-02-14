@@ -6,12 +6,19 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
+export interface LexerMode {
+  name: string;
+  lineNumber: number;
+  rules: string[];  // Rule names in this mode
+}
+
 export interface GrammarRule {
   name: string;
   type: 'lexer' | 'parser';
   definition: string;
   lineNumber: number;
   referencedRules: string[];
+  mode?: string;  // Mode name this rule belongs to (DEFAULT_MODE if undefined)
 }
 
 export interface GrammarToken {
@@ -28,6 +35,7 @@ export interface GrammarAnalysis {
   imports: string[];
   options: Record<string, string>;
   issues: GrammarIssue[];
+  modes: LexerMode[];  // Detected lexer modes
 }
 
 export interface GrammarIssue {
@@ -71,12 +79,14 @@ export class AntlrAnalyzer {
       imports: [],
       options: {},
       issues: [],
+      modes: [{ name: 'DEFAULT_MODE', lineNumber: 0, rules: [] }],
     };
 
     let currentLineNum = 0;
     let inBlockComment = false;
     let pendingRuleName: string | null = null;
     let pendingRuleLine = 0;
+    let currentMode = 'DEFAULT_MODE';
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
@@ -135,6 +145,18 @@ export class AntlrAnalyzer {
               result.options[match[1].trim()] = match[2].trim();
             }
           }
+        }
+        pendingRuleName = null;
+        continue;
+      }
+
+      // Parse mode declarations (lexer modes)
+      const modeMatch = trimmed.match(/^mode\s+([A-Za-z_][A-Za-z0-9_]*)\s*;?$/);
+      if (modeMatch) {
+        currentMode = modeMatch[1];
+        // Add new mode if it doesn't exist
+        if (!result.modes.find(m => m.name === currentMode)) {
+          result.modes.push({ name: currentMode, lineNumber: currentLineNum, rules: [] });
         }
         pendingRuleName = null;
         continue;
@@ -264,12 +286,21 @@ export class AntlrAnalyzer {
           definition: ruleContent,
           lineNumber: pendingRuleLine > 0 ? pendingRuleLine : i + 1, // Approximate
           referencedRules: this.extractReferencedRules(ruleContent),
+          mode: isLexerRule ? currentMode : undefined,  // Track mode for lexer rules
         };
 
         // Reset pending rule line for next one
         pendingRuleLine = 0;
 
         result.rules.push(rule);
+
+        // Track rules per mode for lexer rules
+        if (isLexerRule && currentMode) {
+          const modeObj = result.modes.find(m => m.name === currentMode);
+          if (modeObj) {
+            modeObj.rules.push(ruleName);
+          }
+        }
 
         // For lexer rules, try to extract the pattern
         if (isLexerRule) {
@@ -1939,9 +1970,7 @@ export class AntlrAnalyzer {
     // Check for lexer modes
     if (/\b(mode|pushMode|popMode)\b/.test(grammarContent)) {
       hasLexerModes = true;
-      warnings.push(
-        '⚠️  Grammar uses lexer modes (mode/pushMode/popMode) - these are not fully supported'
-      );
+      // Note: Lexer modes are now supported - use analyze-lexer-modes tool for details
     }
 
     // Check for semantic predicates
@@ -1957,6 +1986,738 @@ export class AntlrAnalyzer {
     }
 
     return { hasLexerModes, hasSemanticPredicates, hasActions, warnings };
+  }
+
+  /**
+   * Analyze lexer modes structure in a grammar
+   * Returns detailed information about modes, their rules, and entry/exit points
+   */
+  static analyzeLexerModes(grammarContent: string): {
+    modes: LexerMode[];
+    entryPoints: Array<{ mode: string; fromRule: string; action: string }>;
+    exitPoints: Array<{ mode: string; fromRule: string; action: string }>;
+    issues: GrammarIssue[];
+  } {
+    const analysis = this.analyze(grammarContent);
+    const issues: GrammarIssue[] = [];
+    const entryPoints: Array<{ mode: string; fromRule: string; action: string }> = [];
+    const exitPoints: Array<{ mode: string; fromRule: string; action: string }> = [];
+
+    // Find all pushMode and popMode actions
+    for (const rule of analysis.rules) {
+      if (rule.type === 'lexer') {
+        // Find pushMode actions (entry points to other modes)
+        const pushMatches = rule.definition.matchAll(/->\s*pushMode\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)/g);
+        for (const match of pushMatches) {
+          entryPoints.push({
+            mode: match[1],
+            fromRule: rule.name,
+            action: `pushMode(${match[1]})`
+          });
+        }
+
+        // Find popMode actions (exit points from current mode)
+        if (/->\s*popMode\b/.test(rule.definition)) {
+          exitPoints.push({
+            mode: rule.mode || 'DEFAULT_MODE',
+            fromRule: rule.name,
+            action: 'popMode'
+          });
+        }
+
+        // Find mode() actions (direct mode switching)
+        const modeMatches = rule.definition.matchAll(/->\s*mode\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)/g);
+        for (const match of modeMatches) {
+          entryPoints.push({
+            mode: match[1],
+            fromRule: rule.name,
+            action: `mode(${match[1]})`
+          });
+        }
+      }
+    }
+
+    // Check for issues
+    const definedModes = new Set(analysis.modes.map(m => m.name));
+
+    // Check for pushMode to undefined modes
+    for (const entry of entryPoints) {
+      if (!definedModes.has(entry.mode)) {
+        issues.push({
+          type: 'error',
+          message: `Rule '${entry.fromRule}' uses ${entry.action} but mode '${entry.mode}' is not defined`,
+          ruleName: entry.fromRule
+        });
+      }
+    }
+
+    // Check for modes with no entry points
+    for (const mode of analysis.modes) {
+      if (mode.name !== 'DEFAULT_MODE') {
+        const hasEntry = entryPoints.some(e => e.mode === mode.name);
+        if (!hasEntry) {
+          issues.push({
+            type: 'warning',
+            message: `Mode '${mode.name}' has no entry points (no pushMode targeting it)`,
+            lineNumber: mode.lineNumber
+          });
+        }
+      }
+    }
+
+    // Check for popMode in DEFAULT_MODE
+    for (const exit of exitPoints) {
+      if (exit.mode === 'DEFAULT_MODE') {
+        issues.push({
+          type: 'warning',
+          message: `Rule '${exit.fromRule}' uses popMode in DEFAULT_MODE (mode stack may be empty)`,
+          ruleName: exit.fromRule
+        });
+      }
+    }
+
+    return {
+      modes: analysis.modes,
+      entryPoints,
+      exitPoints,
+      issues
+    };
+  }
+
+  /**
+   * Analyze mode transitions and detect issues
+   * Returns transition graph and potential problems
+   */
+  static analyzeModeTransitions(grammarContent: string): {
+    transitions: Array<{ from: string; to: string; via: string; rule: string }>;
+    issues: GrammarIssue[];
+    suggestions: string[];
+  } {
+    const modesAnalysis = this.analyzeLexerModes(grammarContent);
+    const transitions: Array<{ from: string; to: string; via: string; rule: string }> = [];
+    const issues: GrammarIssue[] = [...modesAnalysis.issues];
+    const suggestions: string[] = [];
+
+    // Build transition graph
+    for (const entry of modesAnalysis.entryPoints) {
+      // Find which mode the source rule belongs to
+      const analysis = this.analyze(grammarContent);
+      const rule = analysis.rules.find(r => r.name === entry.fromRule);
+      const fromMode = rule?.mode || 'DEFAULT_MODE';
+
+      transitions.push({
+        from: fromMode,
+        to: entry.mode,
+        via: entry.action,
+        rule: entry.fromRule
+      });
+    }
+
+    // Detect potential circular mode transitions
+    const visited = new Set<string>();
+    const recursionStack = new Set<string>();
+
+    function hasCycle(mode: string, transitions: Array<{ from: string; to: string }>): boolean {
+      visited.add(mode);
+      recursionStack.add(mode);
+
+      const outgoing = transitions.filter(t => t.from === mode);
+      for (const t of outgoing) {
+        if (!visited.has(t.to)) {
+          if (hasCycle(t.to, transitions)) return true;
+        } else if (recursionStack.has(t.to)) {
+          return true;
+        }
+      }
+
+      recursionStack.delete(mode);
+      return false;
+    }
+
+    // Check for cycles starting from each mode
+    const allModes = new Set(transitions.map(t => t.from));
+    for (const mode of allModes) {
+      if (!visited.has(mode)) {
+        if (hasCycle(mode, transitions)) {
+          issues.push({
+            type: 'warning',
+            message: 'Potential circular mode transitions detected - ensure popMode is used correctly'
+          });
+          break;
+        }
+      }
+    }
+
+    // Generate suggestions
+    for (const mode of modesAnalysis.modes) {
+      if (mode.name !== 'DEFAULT_MODE' && mode.rules.length === 0) {
+        suggestions.push(`Mode '${mode.name}' is empty - consider removing it or adding rules`);
+      }
+    }
+
+    // Check for balanced push/pop in each mode
+    const modePushCount = new Map<string, number>();
+    const modePopCount = new Map<string, number>();
+
+    for (const entry of modesAnalysis.entryPoints) {
+      modePushCount.set(entry.mode, (modePushCount.get(entry.mode) || 0) + 1);
+    }
+
+    for (const exit of modesAnalysis.exitPoints) {
+      modePopCount.set(exit.mode, (modePopCount.get(exit.mode) || 0) + 1);
+    }
+
+    return {
+      transitions,
+      issues,
+      suggestions
+    };
+  }
+
+  /**
+   * Add a new lexer mode declaration to a grammar
+   */
+  static addLexerMode(
+    grammarContent: string,
+    modeName: string,
+    insertAfter?: string
+  ): { success: boolean; grammar: string; message: string } {
+    const analysis = this.analyze(grammarContent);
+
+    // Validate mode name
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(modeName)) {
+      return {
+        success: false,
+        grammar: grammarContent,
+        message: `Invalid mode name '${modeName}'. Mode names must start with a letter or underscore and contain only alphanumeric characters.`
+      };
+    }
+
+    // Check if mode already exists
+    if (analysis.modes.find(m => m.name === modeName)) {
+      return {
+        success: false,
+        grammar: grammarContent,
+        message: `Mode '${modeName}' already exists.`
+      };
+    }
+
+    const lines = grammarContent.split('\n');
+    let insertLine = lines.length - 1; // Default: end of file (before last line if it's empty)
+
+    // Find insertion point
+    if (insertAfter) {
+      // Find the rule to insert after
+      const targetRule = analysis.rules.find(r => r.name === insertAfter);
+      if (targetRule) {
+        insertLine = targetRule.lineNumber; // 1-based, will be converted to 0-based
+      } else {
+        return {
+          success: false,
+          grammar: grammarContent,
+          message: `Rule '${insertAfter}' not found for insert_after positioning.`
+        };
+      }
+    } else {
+      // Find the last lexer rule
+      const lexerRules = analysis.rules.filter(r => r.type === 'lexer');
+      if (lexerRules.length > 0) {
+        const lastLexerRule = lexerRules[lexerRules.length - 1];
+        // Find the end of this rule
+        insertLine = this.findRuleEndLine(grammarContent, lastLexerRule.lineNumber);
+      }
+    }
+
+    // Insert the mode declaration
+    const modeDeclaration = `\nmode ${modeName};\n`;
+    const insertIndex = insertAfter ? insertLine : insertLine;
+
+    // Convert to 0-based index and find actual insertion point
+    let actualInsertIndex = Math.min(insertIndex, lines.length - 1);
+
+    // If inserting after a rule, find the semicolon line
+    if (insertAfter) {
+      actualInsertIndex = this.findRuleEndLine(grammarContent, insertIndex);
+    }
+
+    lines.splice(actualInsertIndex, 0, ...modeDeclaration.split('\n'));
+
+    return {
+      success: true,
+      grammar: lines.join('\n'),
+      message: `✓ Added mode '${modeName}' after line ${actualInsertIndex}.`
+    };
+  }
+
+  /**
+   * Add a lexer rule to a specific mode
+   */
+  static addRuleToMode(
+    grammarContent: string,
+    ruleName: string,
+    pattern: string,
+    modeName: string,
+    options?: {
+      fragment?: boolean;
+      skip?: boolean;
+      channel?: string;
+      action?: string;
+    }
+  ): { success: boolean; grammar: string; message: string } {
+    const analysis = this.analyze(grammarContent);
+
+    // Validate rule name (must be lexer rule - uppercase)
+    if (!/^[A-Z_][A-Z0-9_]*$/.test(ruleName)) {
+      return {
+        success: false,
+        grammar: grammarContent,
+        message: `Invalid lexer rule name '${ruleName}'. Lexer rules must start with uppercase letter.`
+      };
+    }
+
+    // Check if mode exists
+    const targetMode = analysis.modes.find(m => m.name === modeName);
+    if (!targetMode) {
+      return {
+        success: false,
+        grammar: grammarContent,
+        message: `Mode '${modeName}' not found. Use add-lexer-mode to create it first.`
+      };
+    }
+
+    // Check for duplicate rule
+    if (analysis.rules.find(r => r.name === ruleName)) {
+      return {
+        success: false,
+        grammar: grammarContent,
+        message: `Rule '${ruleName}' already exists.`
+      };
+    }
+
+    // Build the rule definition
+    let ruleDef = '';
+    if (options?.fragment) {
+      ruleDef += 'fragment ';
+    }
+    ruleDef += `${ruleName} : ${pattern}`;
+
+    // Add actions
+    const actions: string[] = [];
+    if (options?.skip) {
+      actions.push('skip');
+    }
+    if (options?.channel) {
+      actions.push(`channel(${options.channel})`);
+    }
+    if (options?.action) {
+      actions.push(options.action);
+    }
+
+    if (actions.length > 0) {
+      ruleDef += ` -> ${actions.join(', ')}`;
+    }
+
+    ruleDef += ';';
+
+    const lines = grammarContent.split('\n');
+
+    // Find where to insert the rule
+    let insertLine: number;
+
+    if (modeName === 'DEFAULT_MODE') {
+      // Insert at the end of DEFAULT_MODE (before first mode declaration)
+      const firstModeIndex = lines.findIndex(l => /^\s*mode\s+[A-Za-z_]/.test(l));
+      if (firstModeIndex > 0) {
+        insertLine = firstModeIndex;
+      } else {
+        // No other modes, insert at end
+        insertLine = lines.length;
+      }
+    } else {
+      // Insert after the mode declaration, before the next mode or end of file
+      insertLine = targetMode.lineNumber; // 1-based
+
+      // Find the next mode declaration or end of file
+      let nextModeLine = lines.length;
+      for (let i = insertLine; i < lines.length; i++) {
+        if (/^\s*mode\s+[A-Za-z_]/.test(lines[i]) && i > targetMode.lineNumber) {
+          nextModeLine = i;
+          break;
+        }
+      }
+
+      // Insert before the next mode (or at end)
+      insertLine = nextModeLine;
+    }
+
+    // Insert the rule
+    lines.splice(insertLine, 0, ruleDef);
+
+    return {
+      success: true,
+      grammar: lines.join('\n'),
+      message: `✓ Added rule '${ruleName}' to mode '${modeName}'.`
+    };
+  }
+
+  /**
+   * Find the line number where a rule ends (has semicolon)
+   */
+  private static findRuleEndLine(grammarContent: string, ruleStartLine: number): number {
+    const lines = grammarContent.split('\n');
+    // Convert 1-based to 0-based
+    let lineIndex = Math.max(0, ruleStartLine - 1);
+
+    // Find the semicolon
+    let depth = 0;
+    for (let i = lineIndex; i < lines.length; i++) {
+      const line = lines[i];
+      for (const char of line) {
+        if (char === '{') depth++;
+        if (char === '}') depth--;
+      }
+      if (depth === 0 && line.includes(';')) {
+        return i + 1; // Return 1-based line number after the semicolon
+      }
+    }
+
+    return lines.length;
+  }
+
+  /**
+   * Move an existing lexer rule to a different mode
+   */
+  static moveRuleToMode(
+    grammarContent: string,
+    ruleName: string,
+    targetMode: string
+  ): { success: boolean; grammar: string; message: string } {
+    const analysis = this.analyze(grammarContent);
+
+    // Find the rule
+    const rule = analysis.rules.find(r => r.name === ruleName);
+    if (!rule) {
+      return {
+        success: false,
+        grammar: grammarContent,
+        message: `Rule '${ruleName}' not found.`
+      };
+    }
+
+    // Only lexer rules can be in modes
+    if (rule.type !== 'lexer') {
+      return {
+        success: false,
+        grammar: grammarContent,
+        message: `Rule '${ruleName}' is a parser rule. Only lexer rules can be moved to modes.`
+      };
+    }
+
+    // Check if target mode exists
+    const targetModeObj = analysis.modes.find(m => m.name === targetMode);
+    if (!targetModeObj) {
+      return {
+        success: false,
+        grammar: grammarContent,
+        message: `Target mode '${targetMode}' not found. Use add-lexer-mode to create it first.`
+      };
+    }
+
+    const currentMode = rule.mode || 'DEFAULT_MODE';
+    if (currentMode === targetMode) {
+      return {
+        success: false,
+        grammar: grammarContent,
+        message: `Rule '${ruleName}' is already in mode '${targetMode}'.`
+      };
+    }
+
+    const lines = grammarContent.split('\n');
+
+    // Find and remove the rule from its current location
+    const ruleStartLine = rule.lineNumber - 1; // Convert to 0-based
+    let ruleEndLine = ruleStartLine;
+
+    // Find the end of the rule (line with semicolon)
+    for (let i = ruleStartLine; i < lines.length; i++) {
+      if (lines[i].includes(';')) {
+        ruleEndLine = i;
+        break;
+      }
+    }
+
+    // Extract the rule content
+    const ruleLines = lines.splice(ruleStartLine, ruleEndLine - ruleStartLine + 1);
+    const ruleContent = ruleLines.join('\n');
+
+    // Find where to insert in target mode
+    let insertLine: number;
+    if (targetMode === 'DEFAULT_MODE') {
+      // Insert before the first mode declaration
+      const firstModeIndex = lines.findIndex(l => /^\s*mode\s+[A-Za-z_]/.test(l));
+      insertLine = firstModeIndex > 0 ? firstModeIndex : lines.length;
+    } else {
+      // Insert after the mode declaration
+      insertLine = targetModeObj.lineNumber; // 1-based
+
+      // Find the next mode declaration or end of file
+      for (let i = insertLine; i < lines.length; i++) {
+        if (/^\s*mode\s+[A-Za-z_]/.test(lines[i])) {
+          insertLine = i;
+          break;
+        }
+        if (i === lines.length - 1) {
+          insertLine = lines.length;
+        }
+      }
+    }
+
+    // Insert the rule at the new location
+    lines.splice(insertLine, 0, ruleContent);
+
+    return {
+      success: true,
+      grammar: lines.join('\n'),
+      message: `✓ Moved rule '${ruleName}' from ${currentMode} to ${targetMode}.`
+    };
+  }
+
+  /**
+   * List all rules in a specific mode
+   */
+  static listModeRules(
+    grammarContent: string,
+    modeName: string
+  ): {
+    success: boolean;
+    mode: string;
+    rules: Array<{ name: string; pattern: string; lineNumber: number }>;
+    message: string;
+  } {
+    const analysis = this.analyze(grammarContent);
+
+    // Find the mode
+    const mode = analysis.modes.find(m => m.name === modeName);
+    if (!mode) {
+      return {
+        success: false,
+        mode: modeName,
+        rules: [],
+        message: `Mode '${modeName}' not found. Available modes: ${analysis.modes.map(m => m.name).join(', ')}`
+      };
+    }
+
+    // Get rules in this mode
+    const modeRules = analysis.rules
+      .filter(r => r.type === 'lexer' && (r.mode || 'DEFAULT_MODE') === modeName)
+      .map(r => {
+        // Extract pattern from definition
+        const def = r.definition.trim();
+        let pattern = def.replace(/^fragment\s+/, '');
+        const colonIndex = pattern.indexOf(':');
+        if (colonIndex >= 0) {
+          pattern = pattern.substring(colonIndex + 1);
+        }
+        pattern = pattern.split('->')[0].trim().replace(/;$/, '').trim();
+
+        return {
+          name: r.name,
+          pattern,
+          lineNumber: r.lineNumber
+        };
+      });
+
+    return {
+      success: true,
+      mode: modeName,
+      rules: modeRules,
+      message: `Found ${modeRules.length} rule(s) in mode '${modeName}'.`
+    };
+  }
+
+  /**
+   * Duplicate a mode with all its rules
+   */
+  static duplicateMode(
+    grammarContent: string,
+    sourceMode: string,
+    newMode: string,
+    options?: { prefixRules?: string }
+  ): { success: boolean; grammar: string; message: string } {
+    const analysis = this.analyze(grammarContent);
+
+    // Find source mode
+    const sourceModeObj = analysis.modes.find(m => m.name === sourceMode);
+    if (!sourceModeObj) {
+      return {
+        success: false,
+        grammar: grammarContent,
+        message: `Source mode '${sourceMode}' not found.`
+      };
+    }
+
+    // Check if new mode already exists
+    if (analysis.modes.find(m => m.name === newMode)) {
+      return {
+        success: false,
+        grammar: grammarContent,
+        message: `Mode '${newMode}' already exists.`
+      };
+    }
+
+    // Get rules in source mode
+    const sourceRules = analysis.rules.filter(
+      r => r.type === 'lexer' && (r.mode || 'DEFAULT_MODE') === sourceMode
+    );
+
+    if (sourceRules.length === 0) {
+      return {
+        success: false,
+        grammar: grammarContent,
+        message: `Source mode '${sourceMode}' has no rules to duplicate.`
+      };
+    }
+
+    const lines = grammarContent.split('\n');
+    const prefix = options?.prefixRules || '';
+
+    // Build the new mode section
+    let newModeSection = `\nmode ${newMode};\n`;
+
+    for (const rule of sourceRules) {
+      let ruleDef = rule.definition;
+
+      if (prefix) {
+        // Add prefix to rule name and update references
+        const newName = prefix + rule.name;
+        ruleDef = ruleDef.replace(
+          new RegExp(`^(fragment\\s+)?${rule.name}\\s*:`),
+          `$1${newName} :`
+        );
+      }
+
+      newModeSection += ruleDef + '\n';
+    }
+
+    // Find where to insert (after the source mode section ends)
+    let insertLine = lines.length;
+
+    if (sourceMode !== 'DEFAULT_MODE') {
+      // Find the end of source mode (next mode or end of file)
+      const sourceModeLine = sourceModeObj.lineNumber;
+      for (let i = sourceModeLine; i < lines.length; i++) {
+        if (i > sourceModeLine && /^\s*mode\s+[A-Za-z_]/.test(lines[i])) {
+          insertLine = i;
+          break;
+        }
+      }
+    } else {
+      // Insert after DEFAULT_MODE rules (before first mode or at end)
+      const firstModeIndex = lines.findIndex(l => /^\s*mode\s+[A-Za-z_]/.test(l));
+      insertLine = firstModeIndex > 0 ? firstModeIndex : lines.length;
+    }
+
+    // Insert the new mode section
+    lines.splice(insertLine, 0, ...newModeSection.split('\n'));
+
+    return {
+      success: true,
+      grammar: lines.join('\n'),
+      message: `✓ Duplicated mode '${sourceMode}' as '${newMode}' with ${sourceRules.length} rules${prefix ? ` (prefixed with '${prefix}')` : ''}.`
+    };
+  }
+
+  /**
+   * Create a new grammar template with mode structure
+   */
+  static createGrammarTemplate(
+    grammarName: string,
+    options?: {
+      type?: 'lexer' | 'parser' | 'combined';
+      modes?: string[];
+      includeBoilerplate?: boolean;
+    }
+  ): { success: boolean; grammar: string; message: string } {
+    const type = options?.type || 'lexer';
+    const modes = options?.modes || [];
+    const includeBoilerplate = options?.includeBoilerplate ?? true;
+
+    let grammar = '';
+
+    // Grammar declaration
+    if (type === 'lexer') {
+      grammar += `lexer grammar ${grammarName};\n\n`;
+    } else if (type === 'parser') {
+      grammar += `parser grammar ${grammarName};\n\n`;
+    } else {
+      grammar += `grammar ${grammarName};\n\n`;
+    }
+
+    // Boilerplate for DEFAULT_MODE
+    if (includeBoilerplate && (type === 'lexer' || type === 'combined')) {
+      grammar += `// ============================================\n`;
+      grammar += `// DEFAULT_MODE - Main tokenization rules\n`;
+      grammar += `// ============================================\n\n`;
+
+      grammar += `// Whitespace (usually skipped)\n`;
+      grammar += `WS: [ \\t\\r\\n]+ -> skip;\n\n`;
+
+      grammar += `// Comments\n`;
+      grammar += `LINE_COMMENT: '//' ~[\\r\\n]* -> skip;\n`;
+      grammar += `BLOCK_COMMENT: '/*' .*? '*/' -> skip;\n\n`;
+
+      grammar += `// Identifiers and literals\n`;
+      grammar += `ID: [a-zA-Z_] [a-zA-Z0-9_]*;\n`;
+      grammar += `NUMBER: [0-9]+ ('.' [0-9]+)?;\n`;
+      grammar += `STRING: '"' (~["\\\\] | '\\\\' .)* '"';\n\n`;
+    }
+
+    // Parser rules for combined grammar
+    if (type === 'combined' && includeBoilerplate) {
+      grammar += `// ============================================\n`;
+      grammar += `// Parser rules\n`;
+      grammar += `// ============================================\n\n`;
+
+      grammar += `// Entry point\n`;
+      grammar += `program: statement* EOF;\n\n`;
+
+      grammar += `statement: expression ';'\\n`;
+      grammar += `  | assignment ';'\n`;
+      grammar += `  ;\n\n`;
+
+      grammar += `assignment: ID '=' expression;\n\n`;
+
+      grammar += `expression\n`;
+      grammar += `  : ID\n`;
+      grammar += `  | NUMBER\n`;
+      grammar += `  | STRING\n`;
+      grammar += `  | expression ('+' | '-') expression\n`;
+      grammar += `  | '(' expression ')'\n`;
+      grammar += `  ;\n\n`;
+    }
+
+    // Add specified modes
+    for (const mode of modes) {
+      if (mode === 'DEFAULT_MODE') continue; // Already handled above
+
+      grammar += `// ============================================\n`;
+      grammar += `// ${mode}\n`;
+      grammar += `// ============================================\n\n`;
+
+      grammar += `mode ${mode};\n\n`;
+
+      if (includeBoilerplate) {
+        grammar += `// TODO: Add lexer rules for ${mode}\n`;
+        grammar += `// Example:\n`;
+        grammar += `// EXIT_${mode}: '}' -> popMode;\n\n`;
+      }
+    }
+
+    return {
+      success: true,
+      grammar,
+      message: `✓ Created ${type} grammar template '${grammarName}' with ${modes.length > 0 ? modes.length + ' mode(s)' : 'no additional modes'}.`
+    };
   }
 
   static previewTokens(
@@ -1983,14 +2744,27 @@ export class AntlrAnalyzer {
     warnings.push(...featureCheck.warnings);
 
     // Add recommendation if complex features detected
-    if (featureCheck.hasLexerModes || featureCheck.hasSemanticPredicates) {
+    if (featureCheck.hasLexerModes) {
+      warnings.push(
+        '💡 Lexer modes detected. Token preview uses DEFAULT_MODE only. Use analyze-lexer-modes to understand mode structure.'
+      );
+    }
+    if (featureCheck.hasSemanticPredicates) {
       warnings.push(
         '💡 Consider using test-parser-rule instead for testing parser rules (works without full lexer simulation)'
       );
     }
 
     // Extract lexer rules (exclude fragments as they're not tokens)
-    const lexerRules = analysis.rules.filter((r) => r.type === 'lexer');
+    // When modes are present, only use DEFAULT_MODE rules for preview
+    let lexerRules = analysis.rules.filter((r) => r.type === 'lexer');
+
+    // If grammar has multiple modes and no specific rules requested, only use DEFAULT_MODE
+    if (featureCheck.hasLexerModes && analysis.modes.length > 1) {
+      if (!options?.rulesToTest || options.rulesToTest.length === 0) {
+        lexerRules = lexerRules.filter((r) => !r.mode || r.mode === 'DEFAULT_MODE');
+      }
+    }
 
     // Filter rules if specified
     let rulesToUse = lexerRules;
@@ -4545,6 +5319,7 @@ export class AntlrAnalyzer {
             message: `Circular import: ${normalizedPath}`,
           },
         ],
+        modes: [{ name: 'DEFAULT_MODE', lineNumber: 0, rules: [] }],
       };
     }
 
@@ -4568,6 +5343,7 @@ export class AntlrAnalyzer {
             message: `Failed to read file: ${error.message}`,
           },
         ],
+        modes: [{ name: 'DEFAULT_MODE', lineNumber: 0, rules: [] }],
       };
     }
 
