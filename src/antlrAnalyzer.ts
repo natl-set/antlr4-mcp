@@ -3514,6 +3514,356 @@ export class AntlrAnalyzer {
     };
   }
 
+  /**
+   * Analyze grammar for performance bottlenecks and improvement opportunities
+   */
+  static analyzeBottlenecks(grammarContent: string): {
+    bottlenecks: Array<{
+      type: 'high-branching' | 'tilde-negation' | 'missing-mode' | 'greedy-loop' | 'deep-recursion' | 'prefix-collision';
+      severity: 'high' | 'medium' | 'low';
+      ruleName?: string;
+      lineNumber?: number;
+      description: string;
+      currentPattern?: string;
+      suggestion: string;
+      impact: string;
+    }>;
+    metrics: {
+      totalBottlenecks: number;
+      highSeverity: number;
+      estimatedImprovement: string;
+    };
+    recommendations: string[];
+  } {
+    const bottlenecks: Array<{
+      type: 'high-branching' | 'tilde-negation' | 'missing-mode' | 'greedy-loop' | 'deep-recursion' | 'prefix-collision';
+      severity: 'high' | 'medium' | 'low';
+      ruleName?: string;
+      lineNumber?: number;
+      description: string;
+      currentPattern?: string;
+      suggestion: string;
+      impact: string;
+    }> = [];
+
+    const analysis = this.analyze(grammarContent);
+    const metrics = this.calculateGrammarMetrics(grammarContent);
+    const recommendations: string[] = [];
+
+    // 1. Detect high-branching rules (many alternatives)
+    for (const rule of metrics.branching.rulesWithMostBranching) {
+      const fullRule = analysis.rules.find(r => r.name === rule.name);
+      let severity: 'high' | 'medium' | 'low' = 'low';
+      let impact = '';
+
+      if (rule.alternatives > 50) {
+        severity = 'high';
+        impact = 'Severe prediction overhead, likely causes SLL→LL fallback';
+      } else if (rule.alternatives > 20) {
+        severity = 'medium';
+        impact = 'Moderate prediction overhead, may cause slowdown';
+      } else if (rule.alternatives > 10) {
+        severity = 'low';
+        impact = 'Minor prediction overhead';
+      }
+
+      if (severity !== 'low' || rule.alternatives > 5) {
+        bottlenecks.push({
+          type: 'high-branching',
+          severity,
+          ruleName: rule.name,
+          lineNumber: fullRule?.lineNumber,
+          description: `Rule '${rule.name}' has ${rule.alternatives} alternatives`,
+          currentPattern: fullRule?.definition.substring(0, 100) + (fullRule && fullRule.definition.length > 100 ? '...' : ''),
+          suggestion: this.getBranchingSuggestion(rule.alternatives),
+          impact
+        });
+      }
+    }
+
+    // 2. Detect tilde negation patterns (~NEWLINE, ~[\r\n], etc.)
+    const tildePatterns = [
+      { regex: /~([A-Z_][A-Z0-9_]*)\+/g, name: 'negated token repetition' },
+      { regex: /~\[[^\]]+\]\+/g, name: 'negated character class repetition' },
+      { regex: /~([A-Z_][A-Z0-9_]*)\*/g, name: 'negated token zero-or-more' },
+      { regex: /~NEWLINE/gi, name: 'newline negation' },
+    ];
+
+    const lines = grammarContent.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      for (const pattern of tildePatterns) {
+        const matches = line.matchAll(pattern.regex);
+        for (const match of matches) {
+          const ruleMatch = line.match(/^([a-z][a-zA-Z0-9_]*)\s*:/);
+          const ruleName = ruleMatch ? ruleMatch[1] : undefined;
+
+          bottlenecks.push({
+            type: 'tilde-negation',
+            severity: 'medium',
+            ruleName,
+            lineNumber: i + 1,
+            description: `Tilde negation pattern '${match[0]}' can cause ambiguity`,
+            currentPattern: line.trim(),
+            suggestion: 'Consider using a lexer mode for line-based content, or use explicit token matching',
+            impact: 'May cause backtracking and slower parsing'
+          });
+        }
+      }
+    }
+
+    // 3. Detect missing lexer mode opportunities
+    const modeOpportunities = this.detectModeOpportunities(grammarContent, analysis);
+    for (const opp of modeOpportunities) {
+      bottlenecks.push({
+        type: 'missing-mode',
+        severity: opp.severity,
+        ruleName: opp.ruleName,
+        lineNumber: opp.lineNumber,
+        description: opp.description,
+        suggestion: opp.suggestion,
+        impact: opp.impact
+      });
+    }
+
+    // 4. Detect greedy loops that could cause issues
+    const greedyPatterns = [
+      { regex: /\(\.\*\)\s*\?/g, name: 'reluctant any', issue: 'Reluctant .* can cause excessive backtracking' },
+      { regex: /\.\+\?\./g, name: 'reluctant some', issue: 'Pattern may match less than expected' },
+      { regex: /\([^)]*\*\)\s*\*/g, name: 'nested star', issue: 'Nested quantifiers can cause exponential backtracking' },
+    ];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      for (const pattern of greedyPatterns) {
+        if (pattern.regex.test(line)) {
+          const ruleMatch = line.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*:/);
+          bottlenecks.push({
+            type: 'greedy-loop',
+            severity: 'medium',
+            ruleName: ruleMatch?.[1],
+            lineNumber: i + 1,
+            description: pattern.issue,
+            currentPattern: line.trim(),
+            suggestion: 'Consider restructuring the pattern or using lexer modes',
+            impact: 'May cause slow parsing or ReDoS vulnerabilities'
+          });
+        }
+      }
+    }
+
+    // 5. Detect potential deep recursion
+    for (const rule of analysis.rules) {
+      if (rule.type === 'parser') {
+        const recursionDepth = this.detectRecursionDepth(rule.name, analysis.rules, new Set());
+        if (recursionDepth > 3) {
+          bottlenecks.push({
+            type: 'deep-recursion',
+            severity: recursionDepth > 5 ? 'high' : 'medium',
+            ruleName: rule.name,
+            lineNumber: rule.lineNumber,
+            description: `Rule has potential recursion depth of ${recursionDepth}`,
+            currentPattern: rule.definition.substring(0, 80),
+            suggestion: 'Consider using iterative patterns or increasing recursion limit',
+            impact: 'May cause stack overflow for deeply nested input'
+          });
+        }
+      }
+    }
+
+    // 6. Detect token prefix collisions (keywords that prefix other keywords)
+    const lexerRules = analysis.rules.filter(r => r.type === 'lexer');
+    const keywordRules = lexerRules.filter(r => /^[A-Z_]+$/.test(r.name));
+    const literalKeywords: Array<{ name: string; pattern: string; line: number }> = [];
+
+    for (const rule of keywordRules) {
+      const literalMatch = rule.definition.match(/^'([^']+)'/);
+      if (literalMatch) {
+        literalKeywords.push({ name: rule.name, pattern: literalMatch[1], line: rule.lineNumber });
+      }
+    }
+
+    for (const kw1 of literalKeywords) {
+      for (const kw2 of literalKeywords) {
+        if (kw1.name !== kw2.name && kw2.pattern.startsWith(kw1.pattern)) {
+          bottlenecks.push({
+            type: 'prefix-collision',
+            severity: 'low',
+            ruleName: kw1.name,
+            lineNumber: kw1.line,
+            description: `Keyword '${kw1.pattern}' is a prefix of '${kw2.pattern}'`,
+            suggestion: 'Ensure rule ordering is correct (longer patterns first) or use semantic predicates',
+            impact: 'May cause incorrect tokenization if ordering is wrong'
+          });
+        }
+      }
+    }
+
+    // Calculate metrics
+    const highSeverity = bottlenecks.filter(b => b.severity === 'high').length;
+    const mediumSeverity = bottlenecks.filter(b => b.severity === 'medium').length;
+
+    let estimatedImprovement = 'Minor';
+    if (highSeverity > 3 || (highSeverity > 0 && mediumSeverity > 5)) {
+      estimatedImprovement = 'Significant (2-5x faster parsing)';
+    } else if (highSeverity > 0 || mediumSeverity > 3) {
+      estimatedImprovement = 'Moderate (20-50% faster parsing)';
+    }
+
+    // Generate recommendations
+    if (bottlenecks.some(b => b.type === 'high-branching' && b.severity === 'high')) {
+      recommendations.push('🔥 Critical: Split high-branching rules into hierarchical sub-rules');
+    }
+    if (bottlenecks.some(b => b.type === 'tilde-negation')) {
+      recommendations.push('💡 Consider using lexer modes for line-based content instead of tilde negation');
+    }
+    if (bottlenecks.some(b => b.type === 'missing-mode')) {
+      recommendations.push('🎯 Add lexer modes for structured content (strings, comments, data blocks)');
+    }
+    if (bottlenecks.some(b => b.type === 'deep-recursion')) {
+      recommendations.push('⚠️ Review recursive rules for potential stack overflow issues');
+    }
+    if (literalKeywords.length > 50) {
+      recommendations.push('📦 Consider grouping related keywords with shared prefixes');
+    }
+
+    // Deduplicate bottlenecks
+    const uniqueBottlenecks = bottlenecks.filter((b, i, arr) =>
+      arr.findIndex(b2 => b2.type === b.type && b2.ruleName === b.ruleName && b2.lineNumber === b.lineNumber) === i
+    );
+
+    // Sort by severity
+    const severityOrder = { high: 0, medium: 1, low: 2 };
+    uniqueBottlenecks.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
+
+    return {
+      bottlenecks: uniqueBottlenecks,
+      metrics: {
+        totalBottlenecks: uniqueBottlenecks.length,
+        highSeverity,
+        estimatedImprovement
+      },
+      recommendations
+    };
+  }
+
+  private static getBranchingSuggestion(alternatives: number): string {
+    if (alternatives > 50) {
+      return 'CRITICAL: Use hierarchical dispatch - create sub-rules grouping related alternatives (e.g., config_stanza, feature_stanza, security_stanza)';
+    } else if (alternatives > 20) {
+      return 'Create helper rules to group related alternatives by category';
+    } else if (alternatives > 10) {
+      return 'Consider grouping alternatives by first token for faster prediction';
+    }
+    return 'Minor optimization possible by reordering alternatives by frequency';
+  }
+
+  private static detectModeOpportunities(
+    grammarContent: string,
+    analysis: GrammarAnalysis
+  ): Array<{
+    ruleName?: string;
+    lineNumber?: number;
+    severity: 'high' | 'medium' | 'low';
+    description: string;
+    suggestion: string;
+    impact: string;
+  }> {
+    const opportunities: Array<{
+      ruleName?: string;
+      lineNumber?: number;
+      severity: 'high' | 'medium' | 'low';
+      description: string;
+      suggestion: string;
+      impact: string;
+    }> = [];
+
+    // Check if grammar already has modes
+    const existingModes = grammarContent.match(/^mode\s+[A-Z_]+/gm) || [];
+    if (existingModes.length > 0) {
+      // Already has some modes, look for expansion opportunities
+      opportunities.push({
+        severity: 'low',
+        description: `Grammar has ${existingModes.length} mode(s), consider expanding for more context-sensitive parsing`,
+        suggestion: 'Add modes for strings, comments, or structured data blocks',
+        impact: 'Improved tokenization accuracy and performance'
+      });
+    }
+
+    // Look for line-based content patterns that could use modes
+    const lines = grammarContent.split('\n');
+    let lineBasedRules = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      // Look for rules that consume "rest of line"
+      if (line.match(/~NEWLINE.*NEWLINE/i) || line.match(/\~[\r\n].*\r?\n/)) {
+        lineBasedRules++;
+      }
+    }
+
+    if (lineBasedRules > 3) {
+      opportunities.push({
+        severity: 'medium',
+        description: `${lineBasedRules} rules use line-based content patterns`,
+        suggestion: 'Create a M_LineContent mode triggered by keywords like "description", "remark", "hostname"',
+        impact: 'Cleaner grammar, better error messages, faster tokenization'
+      });
+    }
+
+    // Look for string/quoted content without modes
+    const stringRules = analysis.rules.filter(r =>
+      r.definition.includes('QUOTE') ||
+      r.definition.includes("'\"'") ||
+      r.definition.match(/STRING|TEXT/)
+    );
+
+    if (stringRules.length > 2 && existingModes.length === 0) {
+      opportunities.push({
+        severity: 'medium',
+        description: 'Grammar handles string/quoted content without lexer modes',
+        suggestion: 'Add M_String mode for handling escape sequences and interpolation',
+        impact: 'Better string handling, support for escape sequences and interpolation'
+      });
+    }
+
+    // Look for multi-line block patterns
+    const blockPatterns = grammarContent.match(/(certificate|key|pem|begin|end).*:/gi) || [];
+    if (blockPatterns.length > 0) {
+      opportunities.push({
+        severity: 'low',
+        description: 'Grammar may handle multi-line blocks (certificates, keys)',
+        suggestion: 'Add dedicated mode for multi-line data blocks',
+        impact: 'Cleaner handling of PEM-encoded data or configuration blocks'
+      });
+    }
+
+    return opportunities;
+  }
+
+  private static detectRecursionDepth(
+    ruleName: string,
+    rules: GrammarRule[],
+    visited: Set<string>,
+    depth: number = 0
+  ): number {
+    if (depth > 10) return depth; // Prevent infinite loops
+    if (visited.has(ruleName)) return depth;
+
+    const rule = rules.find(r => r.name === ruleName);
+    if (!rule) return depth;
+
+    visited.add(ruleName);
+    let maxDepth = depth;
+
+    for (const ref of rule.referencedRules) {
+      const refDepth = this.detectRecursionDepth(ref, rules, new Set(visited), depth + 1);
+      maxDepth = Math.max(maxDepth, refDepth);
+    }
+
+    return maxDepth;
+  }
+
   static previewTokens(
     grammarContent: string,
     input: string,

@@ -2424,6 +2424,43 @@ Common use cases:
     },
   },
   {
+    name: 'analyze-bottlenecks',
+    description: `Analyze grammar for performance bottlenecks and optimization opportunities.
+
+**When to use:** Performance optimization, grammar refactoring, large grammar analysis.
+
+**Detects:**
+- **High-branching rules**: Rules with many alternatives (10+, 20+, 50+)
+- **Tilde negation patterns**: ~NEWLINE, ~[\r\n] that could use lexer modes
+- **Missing lexer mode opportunities**: String handling, line-based content, multi-line blocks
+- **Greedy loop issues**: Nested quantifiers, reluctant patterns
+- **Deep recursion**: Rules with potential stack overflow risk
+- **Token prefix collisions**: Keywords that are prefixes of other keywords
+
+**Returns:**
+- Bottlenecks with severity (high/medium/low)
+- Specific suggestions for each issue
+- Estimated performance improvement potential
+- Prioritized recommendations
+
+**Example:**
+  from_file: "MyGrammar.g4"`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        grammar_content: {
+          type: 'string',
+          description: 'The ANTLR4 grammar file content',
+        },
+        from_file: {
+          type: 'string',
+          description: 'Optional: path to a grammar file to read',
+        },
+      },
+      required: ['grammar_content'],
+    },
+  },
+  {
     name: 'move-rule',
     description: `Move an existing rule to a new position relative to another rule.
 
@@ -5671,6 +5708,80 @@ ${writeResult.message}`;
               } as TextContent,
             ],
             isError: result.summary.errors > 0,
+          };
+        }
+
+        case 'analyze-bottlenecks': {
+          const result = AntlrAnalyzer.analyzeBottlenecks(grammarContent);
+
+          let output = '# Performance Bottleneck Analysis\n\n';
+
+          // Metrics summary
+          output += `**Total Issues:** ${result.metrics.totalBottlenecks}\n`;
+          output += `**High Severity:** ${result.metrics.highSeverity}\n`;
+          output += `**Estimated Improvement:** ${result.metrics.estimatedImprovement}\n\n`;
+
+          // Recommendations
+          if (result.recommendations.length > 0) {
+            output += `## 🎯 Top Recommendations\n\n`;
+            for (const rec of result.recommendations) {
+              output += `${rec}\n`;
+            }
+            output += `\n`;
+          }
+
+          // Group bottlenecks by type
+          const byType: Record<string, typeof result.bottlenecks> = {};
+          for (const b of result.bottlenecks) {
+            if (!byType[b.type]) byType[b.type] = [];
+            byType[b.type].push(b);
+          }
+
+          const typeLabels: Record<string, string> = {
+            'high-branching': '🔀 High Branching',
+            'tilde-negation': '📝 Tilde Negation',
+            'missing-mode': '🎭 Missing Lexer Mode',
+            'greedy-loop': '🔄 Greedy Loop',
+            'deep-recursion': '🔁 Deep Recursion',
+            'prefix-collision': '🔤 Prefix Collision',
+          };
+
+          for (const [type, items] of Object.entries(byType)) {
+            output += `## ${typeLabels[type] || type}\n\n`;
+
+            for (const item of items) {
+              const severityIcon = item.severity === 'high' ? '🔴' : item.severity === 'medium' ? '🟡' : '🟢';
+              output += `### ${severityIcon} ${item.description}\n`;
+
+              if (item.ruleName) {
+                output += `- **Rule:** \`${item.ruleName}\``;
+                if (item.lineNumber) {
+                  output += ` (line ${item.lineNumber})`;
+                }
+                output += `\n`;
+              }
+
+              if (item.currentPattern) {
+                output += `- **Pattern:** \`${item.currentPattern.substring(0, 80)}${item.currentPattern.length > 80 ? '...' : ''}\`\n`;
+              }
+
+              output += `- **Suggestion:** ${item.suggestion}\n`;
+              output += `- **Impact:** ${item.impact}\n\n`;
+            }
+          }
+
+          if (result.bottlenecks.length === 0) {
+            output += `✅ No significant performance bottlenecks detected.\n`;
+          }
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: output,
+              } as TextContent,
+            ],
+            isError: false,
           };
         }
 
