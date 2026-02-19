@@ -9,7 +9,7 @@ import * as path from 'path';
 export interface LexerMode {
   name: string;
   lineNumber: number;
-  rules: string[];  // Rule names in this mode
+  rules: string[]; // Rule names in this mode
 }
 
 export interface GrammarRule {
@@ -18,7 +18,7 @@ export interface GrammarRule {
   definition: string;
   lineNumber: number;
   referencedRules: string[];
-  mode?: string;  // Mode name this rule belongs to (DEFAULT_MODE if undefined)
+  mode?: string; // Mode name this rule belongs to (DEFAULT_MODE if undefined)
 }
 
 export interface GrammarToken {
@@ -35,7 +35,7 @@ export interface GrammarAnalysis {
   imports: string[];
   options: Record<string, string>;
   issues: GrammarIssue[];
-  modes: LexerMode[];  // Detected lexer modes
+  modes: LexerMode[]; // Detected lexer modes
 }
 
 export interface GrammarIssue {
@@ -150,7 +150,7 @@ export class AntlrAnalyzer {
       if (modeMatch) {
         currentMode = modeMatch[1];
         // Add new mode if it doesn't exist
-        if (!result.modes.find(m => m.name === currentMode)) {
+        if (!result.modes.find((m) => m.name === currentMode)) {
           result.modes.push({ name: currentMode, lineNumber: currentLineNum, rules: [] });
         }
         pendingRuleName = null;
@@ -282,7 +282,7 @@ export class AntlrAnalyzer {
           definition: ruleContent,
           lineNumber: ruleStartLine,
           referencedRules: this.extractReferencedRules(ruleContent),
-          mode: isLexerRule ? currentMode : undefined,  // Track mode for lexer rules
+          mode: isLexerRule ? currentMode : undefined, // Track mode for lexer rules
         };
 
         // Reset pending rule line for next one
@@ -292,7 +292,7 @@ export class AntlrAnalyzer {
 
         // Track rules per mode for lexer rules
         if (isLexerRule && currentMode) {
-          const modeObj = result.modes.find(m => m.name === currentMode);
+          const modeObj = result.modes.find((m) => m.name === currentMode);
           if (modeObj) {
             modeObj.rules.push(ruleName);
           }
@@ -392,13 +392,11 @@ export class AntlrAnalyzer {
 
     // Remove comments first (both // and /* */)
     let cleaned = ruleContent
-      .replace(/\/\/[^\n]*/g, '')        // Remove single-line comments
+      .replace(/\/\/[^\n]*/g, '') // Remove single-line comments
       .replace(/\/\*[\s\S]*?\*\//g, ''); // Remove multi-line comments
 
     // Remove string literals
-    cleaned = cleaned
-      .replace(/'[^']*'/g, '')
-      .replace(/"[^"]*"/g, '');
+    cleaned = cleaned.replace(/'[^']*'/g, '').replace(/"[^"]*"/g, '');
 
     // Match rule references (alphanumeric identifiers)
     const matches = cleaned.match(/\b([a-zA-Z_][a-zA-Z0-9_]*)\b/g);
@@ -1186,7 +1184,7 @@ export class AntlrAnalyzer {
 
     // Find the end of the rule by tracking parentheses balance
     // This handles multi-line rules properly
-    let endLine = -1;  // Start at -1, not startLine
+    let endLine = -1; // Start at -1, not startLine
     let parenDepth = 0;
     let foundColon = false;
 
@@ -1218,7 +1216,7 @@ export class AntlrAnalyzer {
         }
       }
 
-      if (endLine !== -1) break;  // Found the semicolon
+      if (endLine !== -1) break; // Found the semicolon
     }
 
     // Fallback: if we couldn't find the end, use the original rule's line count
@@ -1408,7 +1406,7 @@ export class AntlrAnalyzer {
     const visited = new Set<string>();
 
     // Load main grammar
-    const mainAnalysis = this.loadGrammarWithImports(normalizedPath, basePath, cache, visited);
+    this.loadGrammarWithImports(normalizedPath, basePath, cache, visited);
 
     // Validate new name
     const isLexer = /^[A-Z_]/.test(oldName);
@@ -1474,12 +1472,12 @@ export class AntlrAnalyzer {
       // Perform replacement in this file
       const modified = content.replace(regex, newName);
       const refCount = matches.length - (filePath === ruleDefFile ? 1 : 0); // -1 for definition
-      totalRefCount += matches.length;
+      totalRefCount += refCount;
 
       modifiedFiles.push({
         filePath,
         content: modified,
-        refCount: matches.length,
+        refCount,
       });
     }
 
@@ -1672,6 +1670,150 @@ export class AntlrAnalyzer {
       fanIn,
       complexity,
       isRecursive,
+    };
+  }
+
+  /**
+   * Analyze downstream and upstream impact of changing a rule.
+   */
+  static analyzeRuleImpact(
+    grammarContent: string,
+    ruleName: string
+  ): {
+    found: boolean;
+    ruleName: string;
+    type?: 'lexer' | 'parser';
+    isEntryRule?: boolean;
+    directDependencies: string[];
+    directDependents: string[];
+    transitiveDependencies: string[];
+    transitiveDependents: string[];
+    usageCount: number;
+    isRecursive: boolean;
+    riskLevel: 'low' | 'medium' | 'high' | 'critical';
+    summary: string;
+  } {
+    const analysis = this.analyze(grammarContent);
+    const rule = analysis.rules.find((r) => r.name === ruleName);
+
+    if (!rule) {
+      return {
+        found: false,
+        ruleName,
+        directDependencies: [],
+        directDependents: [],
+        transitiveDependencies: [],
+        transitiveDependents: [],
+        usageCount: 0,
+        isRecursive: false,
+        riskLevel: 'low',
+        summary: `Rule '${ruleName}' not found.`,
+      };
+    }
+
+    const definedRuleNames = new Set(analysis.rules.map((r) => r.name));
+    const directDependencies = rule.referencedRules.filter((ref) => definedRuleNames.has(ref));
+    const directDependents = analysis.rules
+      .filter((r) => r.name !== ruleName && r.referencedRules.includes(ruleName))
+      .map((r) => r.name);
+
+    const dependencyGraph = new Map<string, string[]>();
+    const reverseGraph = new Map<string, string[]>();
+    for (const r of analysis.rules) {
+      const refs = r.referencedRules.filter((ref) => definedRuleNames.has(ref));
+      dependencyGraph.set(r.name, refs);
+      for (const ref of refs) {
+        if (!reverseGraph.has(ref)) {
+          reverseGraph.set(ref, []);
+        }
+        reverseGraph.get(ref)!.push(r.name);
+      }
+    }
+
+    const collectTransitive = (graph: Map<string, string[]>, start: string): string[] => {
+      const visited = new Set<string>();
+      const queue: string[] = [...(graph.get(start) || [])];
+      while (queue.length > 0) {
+        const current = queue.shift() as string;
+        if (current === start || visited.has(current)) {
+          continue;
+        }
+        visited.add(current);
+        for (const next of graph.get(current) || []) {
+          if (!visited.has(next) && next !== start) {
+            queue.push(next);
+          }
+        }
+      }
+      return Array.from(visited);
+    };
+
+    const transitiveDependencies = collectTransitive(dependencyGraph, ruleName);
+    const transitiveDependents = collectTransitive(reverseGraph, ruleName);
+    const usageCount = this.findRuleUsages(grammarContent, ruleName).count;
+    const hasCycleToSelf = (() => {
+      const visited = new Set<string>();
+      const queue: string[] = [...(dependencyGraph.get(ruleName) || [])];
+      while (queue.length > 0) {
+        const current = queue.shift() as string;
+        if (current === ruleName) {
+          return true;
+        }
+        if (visited.has(current)) {
+          continue;
+        }
+        visited.add(current);
+        for (const next of dependencyGraph.get(current) || []) {
+          if (!visited.has(next)) {
+            queue.push(next);
+          }
+        }
+      }
+      return false;
+    })();
+    const isRecursive = hasCycleToSelf || rule.referencedRules.includes(ruleName);
+    const entryParserRule = analysis.rules.find((r) => r.type === 'parser')?.name;
+    const isEntryRule = rule.type === 'parser' && rule.name === entryParserRule;
+
+    let riskScore = 0;
+    riskScore += directDependents.length * 2;
+    riskScore += transitiveDependents.length;
+    riskScore += usageCount > 0 ? 1 : 0;
+    riskScore += isRecursive ? 2 : 0;
+    riskScore += isEntryRule ? 3 : 0;
+
+    let riskLevel: 'low' | 'medium' | 'high' | 'critical' = 'low';
+    if (riskScore >= 12) {
+      riskLevel = 'critical';
+    } else if (riskScore >= 7) {
+      riskLevel = 'high';
+    } else if (riskScore >= 3) {
+      riskLevel = 'medium';
+    }
+
+    const summary = [
+      `Rule '${ruleName}' (${rule.type}) impact: ${riskLevel.toUpperCase()}.`,
+      `Direct dependents: ${directDependents.length}, transitive dependents: ${transitiveDependents.length}.`,
+      `Direct dependencies: ${directDependencies.length}, transitive dependencies: ${transitiveDependencies.length}.`,
+      isRecursive ? 'Rule is recursive.' : 'Rule is not recursive.',
+      isEntryRule ? 'Rule is the parser entry point.' : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+
+    return {
+      found: true,
+      ruleName,
+      type: rule.type,
+      isEntryRule,
+      directDependencies,
+      directDependents,
+      transitiveDependencies,
+      transitiveDependents,
+      usageCount,
+      isRecursive,
+      riskLevel,
+      summary,
     };
   }
 
@@ -2126,12 +2268,14 @@ export class AntlrAnalyzer {
     for (const rule of analysis.rules) {
       if (rule.type === 'lexer') {
         // Find pushMode actions (entry points to other modes)
-        const pushMatches = rule.definition.matchAll(/->\s*pushMode\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)/g);
+        const pushMatches = rule.definition.matchAll(
+          /->\s*pushMode\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)/g
+        );
         for (const match of pushMatches) {
           entryPoints.push({
             mode: match[1],
             fromRule: rule.name,
-            action: `pushMode(${match[1]})`
+            action: `pushMode(${match[1]})`,
           });
         }
 
@@ -2140,7 +2284,7 @@ export class AntlrAnalyzer {
           exitPoints.push({
             mode: rule.mode || 'DEFAULT_MODE',
             fromRule: rule.name,
-            action: 'popMode'
+            action: 'popMode',
           });
         }
 
@@ -2151,14 +2295,14 @@ export class AntlrAnalyzer {
           entryPoints.push({
             mode: match[1],
             fromRule: rule.name,
-            action: `mode(${match[1]})`
+            action: `mode(${match[1]})`,
           });
         }
       }
     }
 
     // Check for issues
-    const definedModes = new Set(analysis.modes.map(m => m.name));
+    const definedModes = new Set(analysis.modes.map((m) => m.name));
 
     // Check for pushMode to undefined modes
     for (const entry of entryPoints) {
@@ -2166,7 +2310,7 @@ export class AntlrAnalyzer {
         issues.push({
           type: 'error',
           message: `Rule '${entry.fromRule}' uses ${entry.action} but mode '${entry.mode}' is not defined`,
-          ruleName: entry.fromRule
+          ruleName: entry.fromRule,
         });
       }
     }
@@ -2174,12 +2318,12 @@ export class AntlrAnalyzer {
     // Check for modes with no entry points
     for (const mode of analysis.modes) {
       if (mode.name !== 'DEFAULT_MODE') {
-        const hasEntry = entryPoints.some(e => e.mode === mode.name);
+        const hasEntry = entryPoints.some((e) => e.mode === mode.name);
         if (!hasEntry) {
           issues.push({
             type: 'warning',
             message: `Mode '${mode.name}' has no entry points (no pushMode targeting it)`,
-            lineNumber: mode.lineNumber
+            lineNumber: mode.lineNumber,
           });
         }
       }
@@ -2191,7 +2335,7 @@ export class AntlrAnalyzer {
         issues.push({
           type: 'warning',
           message: `Rule '${exit.fromRule}' uses popMode in DEFAULT_MODE (mode stack may be empty)`,
-          ruleName: exit.fromRule
+          ruleName: exit.fromRule,
         });
       }
     }
@@ -2200,7 +2344,7 @@ export class AntlrAnalyzer {
       modes: analysis.modes,
       entryPoints,
       exitPoints,
-      issues
+      issues,
     };
   }
 
@@ -2222,14 +2366,14 @@ export class AntlrAnalyzer {
     for (const entry of modesAnalysis.entryPoints) {
       // Find which mode the source rule belongs to
       const analysis = this.analyze(grammarContent);
-      const rule = analysis.rules.find(r => r.name === entry.fromRule);
+      const rule = analysis.rules.find((r) => r.name === entry.fromRule);
       const fromMode = rule?.mode || 'DEFAULT_MODE';
 
       transitions.push({
         from: fromMode,
         to: entry.mode,
         via: entry.action,
-        rule: entry.fromRule
+        rule: entry.fromRule,
       });
     }
 
@@ -2241,7 +2385,7 @@ export class AntlrAnalyzer {
       visited.add(mode);
       recursionStack.add(mode);
 
-      const outgoing = transitions.filter(t => t.from === mode);
+      const outgoing = transitions.filter((t) => t.from === mode);
       for (const t of outgoing) {
         if (!visited.has(t.to)) {
           if (hasCycle(t.to, transitions)) return true;
@@ -2255,13 +2399,14 @@ export class AntlrAnalyzer {
     }
 
     // Check for cycles starting from each mode
-    const allModes = new Set(transitions.map(t => t.from));
+    const allModes = new Set(transitions.map((t) => t.from));
     for (const mode of allModes) {
       if (!visited.has(mode)) {
         if (hasCycle(mode, transitions)) {
           issues.push({
             type: 'warning',
-            message: 'Potential circular mode transitions detected - ensure popMode is used correctly'
+            message:
+              'Potential circular mode transitions detected - ensure popMode is used correctly',
           });
           break;
         }
@@ -2290,7 +2435,7 @@ export class AntlrAnalyzer {
     return {
       transitions,
       issues,
-      suggestions
+      suggestions,
     };
   }
 
@@ -2309,16 +2454,16 @@ export class AntlrAnalyzer {
       return {
         success: false,
         grammar: grammarContent,
-        message: `Invalid mode name '${modeName}'. Mode names must start with a letter or underscore and contain only alphanumeric characters.`
+        message: `Invalid mode name '${modeName}'. Mode names must start with a letter or underscore and contain only alphanumeric characters.`,
       };
     }
 
     // Check if mode already exists
-    if (analysis.modes.find(m => m.name === modeName)) {
+    if (analysis.modes.find((m) => m.name === modeName)) {
       return {
         success: false,
         grammar: grammarContent,
-        message: `Mode '${modeName}' already exists.`
+        message: `Mode '${modeName}' already exists.`,
       };
     }
 
@@ -2328,19 +2473,19 @@ export class AntlrAnalyzer {
     // Find insertion point
     if (insertAfter) {
       // Find the rule to insert after
-      const targetRule = analysis.rules.find(r => r.name === insertAfter);
+      const targetRule = analysis.rules.find((r) => r.name === insertAfter);
       if (targetRule) {
         insertLine = targetRule.lineNumber; // 1-based, will be converted to 0-based
       } else {
         return {
           success: false,
           grammar: grammarContent,
-          message: `Rule '${insertAfter}' not found for insert_after positioning.`
+          message: `Rule '${insertAfter}' not found for insert_after positioning.`,
         };
       }
     } else {
       // Find the last lexer rule
-      const lexerRules = analysis.rules.filter(r => r.type === 'lexer');
+      const lexerRules = analysis.rules.filter((r) => r.type === 'lexer');
       if (lexerRules.length > 0) {
         const lastLexerRule = lexerRules[lexerRules.length - 1];
         // Find the end of this rule
@@ -2365,7 +2510,7 @@ export class AntlrAnalyzer {
     return {
       success: true,
       grammar: lines.join('\n'),
-      message: `✓ Added mode '${modeName}' after line ${actualInsertIndex}.`
+      message: `✓ Added mode '${modeName}' after line ${actualInsertIndex}.`,
     };
   }
 
@@ -2391,26 +2536,26 @@ export class AntlrAnalyzer {
       return {
         success: false,
         grammar: grammarContent,
-        message: `Invalid lexer rule name '${ruleName}'. Lexer rules must start with uppercase letter.`
+        message: `Invalid lexer rule name '${ruleName}'. Lexer rules must start with uppercase letter.`,
       };
     }
 
     // Check if mode exists
-    const targetMode = analysis.modes.find(m => m.name === modeName);
+    const targetMode = analysis.modes.find((m) => m.name === modeName);
     if (!targetMode) {
       return {
         success: false,
         grammar: grammarContent,
-        message: `Mode '${modeName}' not found. Use add-lexer-mode to create it first.`
+        message: `Mode '${modeName}' not found. Use add-lexer-mode to create it first.`,
       };
     }
 
     // Check for duplicate rule
-    if (analysis.rules.find(r => r.name === ruleName)) {
+    if (analysis.rules.find((r) => r.name === ruleName)) {
       return {
         success: false,
         grammar: grammarContent,
-        message: `Rule '${ruleName}' already exists.`
+        message: `Rule '${ruleName}' already exists.`,
       };
     }
 
@@ -2446,7 +2591,7 @@ export class AntlrAnalyzer {
 
     if (modeName === 'DEFAULT_MODE') {
       // Insert at the end of DEFAULT_MODE (before first mode declaration)
-      const firstModeIndex = lines.findIndex(l => /^\s*mode\s+[A-Za-z_]/.test(l));
+      const firstModeIndex = lines.findIndex((l) => /^\s*mode\s+[A-Za-z_]/.test(l));
       if (firstModeIndex > 0) {
         insertLine = firstModeIndex;
       } else {
@@ -2476,7 +2621,7 @@ export class AntlrAnalyzer {
     return {
       success: true,
       grammar: lines.join('\n'),
-      message: `✓ Added rule '${ruleName}' to mode '${modeName}'.`
+      message: `✓ Added rule '${ruleName}' to mode '${modeName}'.`,
     };
   }
 
@@ -2486,7 +2631,7 @@ export class AntlrAnalyzer {
   private static findRuleEndLine(grammarContent: string, ruleStartLine: number): number {
     const lines = grammarContent.split('\n');
     // Convert 1-based to 0-based
-    let lineIndex = Math.max(0, ruleStartLine - 1);
+    const lineIndex = Math.max(0, ruleStartLine - 1);
 
     // Find the semicolon
     let depth = 0;
@@ -2515,12 +2660,12 @@ export class AntlrAnalyzer {
     const analysis = this.analyze(grammarContent);
 
     // Find the rule
-    const rule = analysis.rules.find(r => r.name === ruleName);
+    const rule = analysis.rules.find((r) => r.name === ruleName);
     if (!rule) {
       return {
         success: false,
         grammar: grammarContent,
-        message: `Rule '${ruleName}' not found.`
+        message: `Rule '${ruleName}' not found.`,
       };
     }
 
@@ -2529,17 +2674,17 @@ export class AntlrAnalyzer {
       return {
         success: false,
         grammar: grammarContent,
-        message: `Rule '${ruleName}' is a parser rule. Only lexer rules can be moved to modes.`
+        message: `Rule '${ruleName}' is a parser rule. Only lexer rules can be moved to modes.`,
       };
     }
 
     // Check if target mode exists
-    const targetModeObj = analysis.modes.find(m => m.name === targetMode);
+    const targetModeObj = analysis.modes.find((m) => m.name === targetMode);
     if (!targetModeObj) {
       return {
         success: false,
         grammar: grammarContent,
-        message: `Target mode '${targetMode}' not found. Use add-lexer-mode to create it first.`
+        message: `Target mode '${targetMode}' not found. Use add-lexer-mode to create it first.`,
       };
     }
 
@@ -2548,7 +2693,7 @@ export class AntlrAnalyzer {
       return {
         success: false,
         grammar: grammarContent,
-        message: `Rule '${ruleName}' is already in mode '${targetMode}'.`
+        message: `Rule '${ruleName}' is already in mode '${targetMode}'.`,
       };
     }
 
@@ -2574,7 +2719,7 @@ export class AntlrAnalyzer {
     let insertLine: number;
     if (targetMode === 'DEFAULT_MODE') {
       // Insert before the first mode declaration
-      const firstModeIndex = lines.findIndex(l => /^\s*mode\s+[A-Za-z_]/.test(l));
+      const firstModeIndex = lines.findIndex((l) => /^\s*mode\s+[A-Za-z_]/.test(l));
       insertLine = firstModeIndex > 0 ? firstModeIndex : lines.length;
     } else {
       // Insert after the mode declaration
@@ -2598,7 +2743,7 @@ export class AntlrAnalyzer {
     return {
       success: true,
       grammar: lines.join('\n'),
-      message: `✓ Moved rule '${ruleName}' from ${currentMode} to ${targetMode}.`
+      message: `✓ Moved rule '${ruleName}' from ${currentMode} to ${targetMode}.`,
     };
   }
 
@@ -2617,20 +2762,20 @@ export class AntlrAnalyzer {
     const analysis = this.analyze(grammarContent);
 
     // Find the mode
-    const mode = analysis.modes.find(m => m.name === modeName);
+    const mode = analysis.modes.find((m) => m.name === modeName);
     if (!mode) {
       return {
         success: false,
         mode: modeName,
         rules: [],
-        message: `Mode '${modeName}' not found. Available modes: ${analysis.modes.map(m => m.name).join(', ')}`
+        message: `Mode '${modeName}' not found. Available modes: ${analysis.modes.map((m) => m.name).join(', ')}`,
       };
     }
 
     // Get rules in this mode
     const modeRules = analysis.rules
-      .filter(r => r.type === 'lexer' && (r.mode || 'DEFAULT_MODE') === modeName)
-      .map(r => {
+      .filter((r) => r.type === 'lexer' && (r.mode || 'DEFAULT_MODE') === modeName)
+      .map((r) => {
         // Extract pattern from definition
         const def = r.definition.trim();
         let pattern = def.replace(/^fragment\s+/, '');
@@ -2643,7 +2788,7 @@ export class AntlrAnalyzer {
         return {
           name: r.name,
           pattern,
-          lineNumber: r.lineNumber
+          lineNumber: r.lineNumber,
         };
       });
 
@@ -2651,7 +2796,7 @@ export class AntlrAnalyzer {
       success: true,
       mode: modeName,
       rules: modeRules,
-      message: `Found ${modeRules.length} rule(s) in mode '${modeName}'.`
+      message: `Found ${modeRules.length} rule(s) in mode '${modeName}'.`,
     };
   }
 
@@ -2667,34 +2812,34 @@ export class AntlrAnalyzer {
     const analysis = this.analyze(grammarContent);
 
     // Find source mode
-    const sourceModeObj = analysis.modes.find(m => m.name === sourceMode);
+    const sourceModeObj = analysis.modes.find((m) => m.name === sourceMode);
     if (!sourceModeObj) {
       return {
         success: false,
         grammar: grammarContent,
-        message: `Source mode '${sourceMode}' not found.`
+        message: `Source mode '${sourceMode}' not found.`,
       };
     }
 
     // Check if new mode already exists
-    if (analysis.modes.find(m => m.name === newMode)) {
+    if (analysis.modes.find((m) => m.name === newMode)) {
       return {
         success: false,
         grammar: grammarContent,
-        message: `Mode '${newMode}' already exists.`
+        message: `Mode '${newMode}' already exists.`,
       };
     }
 
     // Get rules in source mode
     const sourceRules = analysis.rules.filter(
-      r => r.type === 'lexer' && (r.mode || 'DEFAULT_MODE') === sourceMode
+      (r) => r.type === 'lexer' && (r.mode || 'DEFAULT_MODE') === sourceMode
     );
 
     if (sourceRules.length === 0) {
       return {
         success: false,
         grammar: grammarContent,
-        message: `Source mode '${sourceMode}' has no rules to duplicate.`
+        message: `Source mode '${sourceMode}' has no rules to duplicate.`,
       };
     }
 
@@ -2733,7 +2878,7 @@ export class AntlrAnalyzer {
       }
     } else {
       // Insert after DEFAULT_MODE rules (before first mode or at end)
-      const firstModeIndex = lines.findIndex(l => /^\s*mode\s+[A-Za-z_]/.test(l));
+      const firstModeIndex = lines.findIndex((l) => /^\s*mode\s+[A-Za-z_]/.test(l));
       insertLine = firstModeIndex > 0 ? firstModeIndex : lines.length;
     }
 
@@ -2743,7 +2888,7 @@ export class AntlrAnalyzer {
     return {
       success: true,
       grammar: lines.join('\n'),
-      message: `✓ Duplicated mode '${sourceMode}' as '${newMode}' with ${sourceRules.length} rules${prefix ? ` (prefixed with '${prefix}')` : ''}.`
+      message: `✓ Duplicated mode '${sourceMode}' as '${newMode}' with ${sourceRules.length} rules${prefix ? ` (prefixed with '${prefix}')` : ''}.`,
     };
   }
 
@@ -2836,7 +2981,7 @@ export class AntlrAnalyzer {
     return {
       success: true,
       grammar,
-      message: `✓ Created ${type} grammar template '${grammarName}' with ${modes.length > 0 ? modes.length + ' mode(s)' : 'no additional modes'}.`
+      message: `✓ Created ${type} grammar template '${grammarName}' with ${modes.length > 0 ? modes.length + ' mode(s)' : 'no additional modes'}.`,
     };
   }
 
@@ -2878,9 +3023,9 @@ export class AntlrAnalyzer {
     const analysis = this.analyze(grammarContent);
     const lines = grammarContent.split('\n');
 
-    const parserRules = analysis.rules.filter(r => r.type === 'parser');
-    const lexerRules = analysis.rules.filter(r => r.type === 'lexer');
-    const fragments = lexerRules.filter(r => r.definition.startsWith('fragment'));
+    const parserRules = analysis.rules.filter((r) => r.type === 'parser');
+    const lexerRules = analysis.rules.filter((r) => r.type === 'lexer');
+    const fragments = lexerRules.filter((r) => r.definition.startsWith('fragment'));
 
     // Calculate branching metrics
     const branchingData: Array<{ name: string; alternatives: number; depth: number }> = [];
@@ -2894,21 +3039,28 @@ export class AntlrAnalyzer {
       branchingData.push({ name: rule.name, alternatives, depth });
     }
 
-    const avgAlternatives = branchingData.length > 0
-      ? branchingData.reduce((sum, b) => sum + b.alternatives, 0) / branchingData.length
-      : 0;
-    const maxAlternatives = Math.max(...branchingData.map(b => b.alternatives), 1);
-    const avgBranchingDepth = branchingData.length > 0
-      ? branchingData.reduce((sum, b) => sum + b.depth, 0) / branchingData.length
-      : 0;
-    const maxBranchingDepth = Math.max(...branchingData.map(b => b.depth), 0);
+    const avgAlternatives =
+      branchingData.length > 0
+        ? branchingData.reduce((sum, b) => sum + b.alternatives, 0) / branchingData.length
+        : 0;
+    const maxAlternatives = Math.max(...branchingData.map((b) => b.alternatives), 1);
+    const avgBranchingDepth =
+      branchingData.length > 0
+        ? branchingData.reduce((sum, b) => sum + b.depth, 0) / branchingData.length
+        : 0;
+    const maxBranchingDepth = Math.max(...branchingData.map((b) => b.depth), 0);
 
     // Branching distribution
     const branchingDistribution: Record<string, number> = {};
     for (const b of branchingData) {
-      const bucket = b.alternatives <= 2 ? '1-2' :
-                     b.alternatives <= 5 ? '3-5' :
-                     b.alternatives <= 10 ? '6-10' : '10+';
+      const bucket =
+        b.alternatives <= 2
+          ? '1-2'
+          : b.alternatives <= 5
+            ? '3-5'
+            : b.alternatives <= 10
+              ? '6-10'
+              : '10+';
       branchingDistribution[bucket] = (branchingDistribution[bucket] || 0) + 1;
     }
 
@@ -2925,10 +3077,9 @@ export class AntlrAnalyzer {
     }
 
     const totalCyclomaticComplexity = complexityData.reduce((sum, c) => sum + c.complexity, 0);
-    const avgCyclomaticComplexity = complexityData.length > 0
-      ? totalCyclomaticComplexity / complexityData.length
-      : 0;
-    const maxCyclomaticComplexity = Math.max(...complexityData.map(c => c.complexity), 1);
+    const avgCyclomaticComplexity =
+      complexityData.length > 0 ? totalCyclomaticComplexity / complexityData.length : 0;
+    const maxCyclomaticComplexity = Math.max(...complexityData.map((c) => c.complexity), 1);
 
     // Detect recursive rules
     const recursiveRules = this.detectRecursiveRules(analysis);
@@ -2971,29 +3122,29 @@ export class AntlrAnalyzer {
       fanOutValues.push(ruleReferences.get(rule.name)?.size || 0);
     }
 
-    const avgFanIn = fanInValues.length > 0
-      ? fanInValues.reduce((sum, v) => sum + v, 0) / fanInValues.length
-      : 0;
-    const avgFanOut = fanOutValues.length > 0
-      ? fanOutValues.reduce((sum, v) => sum + v, 0) / fanOutValues.length
-      : 0;
+    const avgFanIn =
+      fanInValues.length > 0 ? fanInValues.reduce((sum, v) => sum + v, 0) / fanInValues.length : 0;
+    const avgFanOut =
+      fanOutValues.length > 0
+        ? fanOutValues.reduce((sum, v) => sum + v, 0) / fanOutValues.length
+        : 0;
 
     // Orphan rules (not referenced by any OTHER rule, excluding self-references)
     const orphanRules = analysis.rules
-      .filter(r => {
+      .filter((r) => {
         if (r.type !== 'parser') return false;
         const refs = referencedBy.get(r.name);
         // Not an orphan if it's referenced by at least one OTHER rule
         if (!refs) return true;
         // Check if any reference is from a different rule
-        return ![...refs].some(refName => refName !== r.name);
+        return ![...refs].some((refName) => refName !== r.name);
       })
-      .map(r => r.name);
+      .map((r) => r.name);
 
     // Hub rules (referenced by many rules)
     const hubRules = analysis.rules
-      .filter(r => (referencedBy.get(r.name)?.size || 0) >= 5)
-      .map(r => r.name);
+      .filter((r) => (referencedBy.get(r.name)?.size || 0) >= 5)
+      .map((r) => r.name);
 
     // Most referenced rules
     const mostReferenced = [...referencedBy.entries()]
@@ -3008,9 +3159,8 @@ export class AntlrAnalyzer {
         lexerRules: lexerRules.length,
         fragments: fragments.length,
         totalLines: lines.length,
-        avgRuleLength: analysis.rules.length > 0
-          ? Math.round(lines.length / analysis.rules.length)
-          : 0
+        avgRuleLength:
+          analysis.rules.length > 0 ? Math.round(lines.length / analysis.rules.length) : 0,
       },
       branching: {
         avgAlternatives: Math.round(avgAlternatives * 10) / 10,
@@ -3018,22 +3168,22 @@ export class AntlrAnalyzer {
         avgBranchingDepth: Math.round(avgBranchingDepth * 10) / 10,
         maxBranchingDepth,
         branchingDistribution,
-        rulesWithMostBranching
+        rulesWithMostBranching,
       },
       complexity: {
         avgCyclomaticComplexity: Math.round(avgCyclomaticComplexity * 10) / 10,
         maxCyclomaticComplexity,
         totalCyclomaticComplexity,
         recursiveRules,
-        estimatedParseComplexity
+        estimatedParseComplexity,
       },
       dependencies: {
         avgFanIn: Math.round(avgFanIn * 10) / 10,
         avgFanOut: Math.round(avgFanOut * 10) / 10,
         orphanRules,
         hubRules,
-        mostReferenced
-      }
+        mostReferenced,
+      },
     };
   }
 
@@ -3194,7 +3344,7 @@ export class AntlrAnalyzer {
       if (rule.type !== 'parser') continue;
 
       for (const ref of rule.referencedRules) {
-        const refRule = analysis.rules.find(r => r.name === ref && r.type === 'parser');
+        const refRule = analysis.rules.find((r) => r.name === ref && r.type === 'parser');
         if (refRule && refRule.referencedRules.includes(rule.name)) {
           if (!recursive.includes(rule.name)) {
             recursive.push(rule.name);
@@ -3241,7 +3391,7 @@ export class AntlrAnalyzer {
       const fragmentRefs = pattern.match(/\bF_[A-Za-z_]+/g) || [];
       if (fragmentRefs.length >= 2) {
         // Check for complementary naming patterns
-        const names = fragmentRefs.map(r => r.replace('F_', '').toLowerCase());
+        const names = fragmentRefs.map((r) => r.replace('F_', '').toLowerCase());
 
         // Check for common complementary patterns
         for (let i = 0; i < names.length; i++) {
@@ -3250,32 +3400,42 @@ export class AntlrAnalyzer {
             const n2 = names[j];
 
             // Whitespace/NonWhitespace
-            if ((n1.includes('whitespace') && n2.includes('nonwhitespace')) ||
-                (n1.includes('nonwhitespace') && n2.includes('whitespace'))) {
+            if (
+              (n1.includes('whitespace') && n2.includes('nonwhitespace')) ||
+              (n1.includes('nonwhitespace') && n2.includes('whitespace'))
+            ) {
               return true;
             }
 
             // Newline/NonNewline
-            if ((n1.includes('newline') && n2.includes('nonnewline')) ||
-                (n1.includes('nonnewline') && n2.includes('newline'))) {
+            if (
+              (n1.includes('newline') && n2.includes('nonnewline')) ||
+              (n1.includes('nonnewline') && n2.includes('newline'))
+            ) {
               return true;
             }
 
             // Digit/NonDigit
-            if ((n1.includes('digit') && n2.includes('nondigit')) ||
-                (n1.includes('nondigit') && n2.includes('digit'))) {
+            if (
+              (n1.includes('digit') && n2.includes('nondigit')) ||
+              (n1.includes('nondigit') && n2.includes('digit'))
+            ) {
               return true;
             }
 
             // Whitespace and NewlineChar are disjoint (spaces vs \r\n)
-            if ((n1.includes('whitespace') && n2.includes('newline')) ||
-                (n1.includes('newline') && n2.includes('whitespace'))) {
+            if (
+              (n1.includes('whitespace') && n2.includes('newline')) ||
+              (n1.includes('newline') && n2.includes('whitespace'))
+            ) {
               return true;
             }
 
             // Word and NonWord
-            if ((n1.includes('word') && !n1.includes('nonword') && n2.includes('nonword')) ||
-                (n1.includes('nonword') && n2.includes('word') && !n2.includes('nonword'))) {
+            if (
+              (n1.includes('word') && !n1.includes('nonword') && n2.includes('nonword')) ||
+              (n1.includes('nonword') && n2.includes('word') && !n2.includes('nonword'))
+            ) {
               return true;
             }
           }
@@ -3315,7 +3475,7 @@ export class AntlrAnalyzer {
         /Newline.*NonNewline|NonNewline.*Newline/i,
       ];
 
-      return disjointPatterns.some(p => p.test(pattern));
+      return disjointPatterns.some((p) => p.test(pattern));
     };
 
     // Helper: Check for truly overlapping nested quantifiers
@@ -3329,15 +3489,18 @@ export class AntlrAnalyzer {
 
       // Check if inner pattern has alternation that could overlap
       if (innerPattern.includes('|')) {
-        const alts = innerPattern.split('|').map(a => a.trim());
+        const alts = innerPattern.split('|').map((a) => a.trim());
         // Check for overlapping alternatives
         for (let i = 0; i < alts.length; i++) {
           for (let j = i + 1; j < alts.length; j++) {
             // If both start with same character or one is prefix of other
-            if (alts[i] && alts[j] &&
-                (alts[i][0] === alts[j][0] ||
-                 alts[i].startsWith(alts[j]) ||
-                 alts[j].startsWith(alts[i]))) {
+            if (
+              alts[i] &&
+              alts[j] &&
+              (alts[i][0] === alts[j][0] ||
+                alts[i].startsWith(alts[j]) ||
+                alts[j].startsWith(alts[i]))
+            ) {
               return true;
             }
           }
@@ -3389,7 +3552,8 @@ export class AntlrAnalyzer {
             pattern,
             issue: 'Nested quantifiers (likely safe)',
             severity: 'low',
-            suggestion: 'Pattern uses nested repetition. Verify inner and outer patterns are disjoint for safety.'
+            suggestion:
+              'Pattern uses nested repetition. Verify inner and outer patterns are disjoint for safety.',
           });
         } else {
           // Potentially dangerous
@@ -3399,7 +3563,8 @@ export class AntlrAnalyzer {
             pattern,
             issue: 'Nested quantifiers with potential overlap',
             severity: 'high',
-            suggestion: 'Avoid nested quantifiers like (a+)+. Use possessive quantifiers or atomic groups if supported.'
+            suggestion:
+              'Avoid nested quantifiers like (a+)+. Use possessive quantifiers or atomic groups if supported.',
           });
         }
       }
@@ -3412,14 +3577,17 @@ export class AntlrAnalyzer {
           pattern,
           issue: 'Overlapping alternatives',
           severity: 'high',
-          suggestion: 'Remove duplicate alternatives or make them non-overlapping.'
+          suggestion: 'Remove duplicate alternatives or make them non-overlapping.',
         });
       }
 
       // Pattern 3: Alternation with common prefix like (ab|ac)
       const altMatch = pattern.match(/\(([^)]+)\)/);
       if (altMatch) {
-        const alts = altMatch[1].split('|').map(a => a.trim()).filter(a => a.length > 1);
+        const alts = altMatch[1]
+          .split('|')
+          .map((a) => a.trim())
+          .filter((a) => a.length > 1);
         for (let i = 0; i < alts.length; i++) {
           for (let j = i + 1; j < alts.length; j++) {
             if (alts[i][0] === alts[j][0] && alts[i].length > 1 && alts[j].length > 1) {
@@ -3429,7 +3597,7 @@ export class AntlrAnalyzer {
                 pattern,
                 issue: 'Alternatives with common prefix',
                 severity: 'medium',
-                suggestion: `Factor out common prefix: ${alts[i][0]}(${alts[i].slice(1)}|${alts[j].slice(1)})`
+                suggestion: `Factor out common prefix: ${alts[i][0]}(${alts[i].slice(1)}|${alts[j].slice(1)})`,
               });
             }
           }
@@ -3444,7 +3612,7 @@ export class AntlrAnalyzer {
           pattern,
           issue: 'Unbounded repetition of broad character class',
           severity: 'medium',
-          suggestion: 'Limit the character class or add length bounds.'
+          suggestion: 'Limit the character class or add length bounds.',
         });
       }
 
@@ -3457,15 +3625,15 @@ export class AntlrAnalyzer {
           pattern,
           issue: 'Multiple optional elements in sequence',
           severity: 'low',
-          suggestion: 'Consider grouping optional elements or using a different structure.'
+          suggestion: 'Consider grouping optional elements or using a different structure.',
         });
       }
     }
 
     const summary = {
-      high: vulnerabilities.filter(v => v.severity === 'high').length,
-      medium: vulnerabilities.filter(v => v.severity === 'medium').length,
-      low: vulnerabilities.filter(v => v.severity === 'low').length
+      high: vulnerabilities.filter((v) => v.severity === 'high').length,
+      medium: vulnerabilities.filter((v) => v.severity === 'medium').length,
+      low: vulnerabilities.filter((v) => v.severity === 'low').length,
     };
 
     return { vulnerabilities, summary };
@@ -3518,18 +3686,18 @@ export class AntlrAnalyzer {
             ruleName: rule.name,
             lineNumber: rule.lineNumber,
             message: `Lexer rule '${rule.name}' must start with uppercase letter`,
-            suggestion: `Rename to ${rule.name.charAt(0).toUpperCase() + rule.name.slice(1)}`
+            suggestion: `Rename to ${rule.name.charAt(0).toUpperCase() + rule.name.slice(1)}`,
           });
         } else if (!isStrictUpperCase && !isFragment) {
           // Non-fragment lexer rules should ideally be UPPER_CASE
           // But this is just a style suggestion, not an error
           issues.push({
             type: 'naming',
-            severity: 'info',  // Changed from warning to info
+            severity: 'info', // Changed from warning to info
             ruleName: rule.name,
             lineNumber: rule.lineNumber,
             message: `Lexer rule '${rule.name}' could use UPPER_CASE naming`,
-            suggestion: `Consider ${rule.name.toUpperCase().replace(/[^A-Z0-9_]/g, '_')}`
+            suggestion: `Consider ${rule.name.toUpperCase().replace(/[^A-Z0-9_]/g, '_')}`,
           });
         }
         // Fragment rules with mixed case (like F_HexDigit) are acceptable
@@ -3544,7 +3712,7 @@ export class AntlrAnalyzer {
             ruleName: rule.name,
             lineNumber: rule.lineNumber,
             message: `Parser rule '${rule.name}' should use lowerCamelCase naming`,
-            suggestion: `Consider renaming to ${rule.name.charAt(0).toLowerCase() + rule.name.slice(1)}`
+            suggestion: `Consider renaming to ${rule.name.charAt(0).toLowerCase() + rule.name.slice(1)}`,
           });
         }
       }
@@ -3554,14 +3722,14 @@ export class AntlrAnalyzer {
     const metrics = this.calculateGrammarMetrics(grammarContent);
     for (const rule of metrics.branching.rulesWithMostBranching) {
       if (rule.alternatives > 10) {
-        const fullRule = analysis.rules.find(r => r.name === rule.name);
+        const fullRule = analysis.rules.find((r) => r.name === rule.name);
         issues.push({
           type: 'maintainability',
           severity: 'warning',
           ruleName: rule.name,
           lineNumber: fullRule?.lineNumber,
           message: `Rule '${rule.name}' has ${rule.alternatives} alternatives, consider splitting`,
-          suggestion: 'Break into multiple smaller rules or use helper rules'
+          suggestion: 'Break into multiple smaller rules or use helper rules',
         });
       }
     }
@@ -3570,21 +3738,20 @@ export class AntlrAnalyzer {
     const entryPoints = ['program', 'start', 'file', 'compilationUnit', 'main'];
     for (const orphan of metrics.dependencies.orphanRules) {
       if (!entryPoints.includes(orphan.toLowerCase())) {
-        const rule = analysis.rules.find(r => r.name === orphan);
+        const rule = analysis.rules.find((r) => r.name === orphan);
         issues.push({
           type: 'best-practice',
           severity: 'info',
           ruleName: orphan,
           lineNumber: rule?.lineNumber,
           message: `Rule '${orphan}' is not referenced by any other rule`,
-          suggestion: 'Remove if unused, or verify it\'s an entry point'
+          suggestion: "Remove if unused, or verify it's an entry point",
         });
       }
     }
 
     // Check for missing comments/documentation
     const lines = grammarContent.split('\n');
-    let lastCommentLine = 0;
     for (const rule of analysis.rules) {
       // Check if there's a comment within 3 lines before the rule
       let hasNearbyComment = false;
@@ -3605,7 +3772,7 @@ export class AntlrAnalyzer {
           ruleName: rule.name,
           lineNumber: rule.lineNumber,
           message: `Complex rule '${rule.name}' lacks documentation`,
-          suggestion: 'Add a comment explaining the rule purpose'
+          suggestion: 'Add a comment explaining the rule purpose',
         });
       }
     }
@@ -3616,14 +3783,14 @@ export class AntlrAnalyzer {
         type: 'best-practice',
         severity: 'error',
         message: 'Missing grammar declaration',
-        suggestion: 'Add "grammar Name;" at the beginning of the file'
+        suggestion: 'Add "grammar Name;" at the beginning of the file',
       });
     }
 
     // Calculate score
-    const errors = issues.filter(i => i.severity === 'error').length;
-    const warnings = issues.filter(i => i.severity === 'warning').length;
-    const infos = issues.filter(i => i.severity === 'info').length;
+    const errors = issues.filter((i) => i.severity === 'error').length;
+    const warnings = issues.filter((i) => i.severity === 'warning').length;
+    const infos = issues.filter((i) => i.severity === 'info').length;
 
     // Start at 100, deduct for issues
     // Info-level issues are just suggestions and don't penalize the score
@@ -3636,7 +3803,7 @@ export class AntlrAnalyzer {
     return {
       issues,
       summary: { errors, warnings, infos },
-      score
+      score,
     };
   }
 
@@ -3645,7 +3812,13 @@ export class AntlrAnalyzer {
    */
   static analyzeBottlenecks(grammarContent: string): {
     bottlenecks: Array<{
-      type: 'high-branching' | 'tilde-negation' | 'missing-mode' | 'greedy-loop' | 'deep-recursion' | 'prefix-collision';
+      type:
+        | 'high-branching'
+        | 'tilde-negation'
+        | 'missing-mode'
+        | 'greedy-loop'
+        | 'deep-recursion'
+        | 'prefix-collision';
       severity: 'high' | 'medium' | 'low';
       ruleName?: string;
       lineNumber?: number;
@@ -3662,7 +3835,13 @@ export class AntlrAnalyzer {
     recommendations: string[];
   } {
     const bottlenecks: Array<{
-      type: 'high-branching' | 'tilde-negation' | 'missing-mode' | 'greedy-loop' | 'deep-recursion' | 'prefix-collision';
+      type:
+        | 'high-branching'
+        | 'tilde-negation'
+        | 'missing-mode'
+        | 'greedy-loop'
+        | 'deep-recursion'
+        | 'prefix-collision';
       severity: 'high' | 'medium' | 'low';
       ruleName?: string;
       lineNumber?: number;
@@ -3678,7 +3857,7 @@ export class AntlrAnalyzer {
 
     // 1. Detect high-branching rules (many alternatives)
     for (const rule of metrics.branching.rulesWithMostBranching) {
-      const fullRule = analysis.rules.find(r => r.name === rule.name);
+      const fullRule = analysis.rules.find((r) => r.name === rule.name);
       let severity: 'high' | 'medium' | 'low' = 'low';
       let impact = '';
 
@@ -3700,9 +3879,11 @@ export class AntlrAnalyzer {
           ruleName: rule.name,
           lineNumber: fullRule?.lineNumber,
           description: `Rule '${rule.name}' has ${rule.alternatives} alternatives`,
-          currentPattern: fullRule?.definition.substring(0, 100) + (fullRule && fullRule.definition.length > 100 ? '...' : ''),
+          currentPattern:
+            fullRule?.definition.substring(0, 100) +
+            (fullRule && fullRule.definition.length > 100 ? '...' : ''),
           suggestion: this.getBranchingSuggestion(rule.alternatives),
-          impact
+          impact,
         });
       }
     }
@@ -3731,8 +3912,9 @@ export class AntlrAnalyzer {
             lineNumber: i + 1,
             description: `Tilde negation pattern '${match[0]}' can cause ambiguity`,
             currentPattern: line.trim(),
-            suggestion: 'Consider using a lexer mode for line-based content, or use explicit token matching',
-            impact: 'May cause backtracking and slower parsing'
+            suggestion:
+              'Consider using a lexer mode for line-based content, or use explicit token matching',
+            impact: 'May cause backtracking and slower parsing',
           });
         }
       }
@@ -3748,15 +3930,23 @@ export class AntlrAnalyzer {
         lineNumber: opp.lineNumber,
         description: opp.description,
         suggestion: opp.suggestion,
-        impact: opp.impact
+        impact: opp.impact,
       });
     }
 
     // 4. Detect greedy loops that could cause issues
     const greedyPatterns = [
-      { regex: /\(\.\*\)\s*\?/g, name: 'reluctant any', issue: 'Reluctant .* can cause excessive backtracking' },
+      {
+        regex: /\(\.\*\)\s*\?/g,
+        name: 'reluctant any',
+        issue: 'Reluctant .* can cause excessive backtracking',
+      },
       { regex: /\.\+\?\./g, name: 'reluctant some', issue: 'Pattern may match less than expected' },
-      { regex: /\([^)]*\*\)\s*\*/g, name: 'nested star', issue: 'Nested quantifiers can cause exponential backtracking' },
+      {
+        regex: /\([^)]*\*\)\s*\*/g,
+        name: 'nested star',
+        issue: 'Nested quantifiers can cause exponential backtracking',
+      },
     ];
 
     for (let i = 0; i < lines.length; i++) {
@@ -3772,7 +3962,7 @@ export class AntlrAnalyzer {
             description: pattern.issue,
             currentPattern: line.trim(),
             suggestion: 'Consider restructuring the pattern or using lexer modes',
-            impact: 'May cause slow parsing or ReDoS vulnerabilities'
+            impact: 'May cause slow parsing or ReDoS vulnerabilities',
           });
         }
       }
@@ -3791,15 +3981,15 @@ export class AntlrAnalyzer {
             description: `Rule has potential recursion depth of ${recursionDepth}`,
             currentPattern: rule.definition.substring(0, 80),
             suggestion: 'Consider using iterative patterns or increasing recursion limit',
-            impact: 'May cause stack overflow for deeply nested input'
+            impact: 'May cause stack overflow for deeply nested input',
           });
         }
       }
     }
 
     // 6. Detect token prefix collisions (keywords that prefix other keywords)
-    const lexerRules = analysis.rules.filter(r => r.type === 'lexer');
-    const keywordRules = lexerRules.filter(r => /^[A-Z_]+$/.test(r.name));
+    const lexerRules = analysis.rules.filter((r) => r.type === 'lexer');
+    const keywordRules = lexerRules.filter((r) => /^[A-Z_]+$/.test(r.name));
     const literalKeywords: Array<{ name: string; pattern: string; line: number }> = [];
 
     for (const rule of keywordRules) {
@@ -3819,16 +4009,17 @@ export class AntlrAnalyzer {
             ruleName: kw1.name,
             lineNumber: kw1.line,
             description: `Keyword '${kw1.pattern}' is a prefix of '${kw2.pattern}'`,
-            suggestion: 'Ensure rule ordering is correct (longer patterns first) or use semantic predicates',
-            impact: 'May cause incorrect tokenization if ordering is wrong'
+            suggestion:
+              'Ensure rule ordering is correct (longer patterns first) or use semantic predicates',
+            impact: 'May cause incorrect tokenization if ordering is wrong',
           });
         }
       }
     }
 
     // Calculate metrics
-    const highSeverity = bottlenecks.filter(b => b.severity === 'high').length;
-    const mediumSeverity = bottlenecks.filter(b => b.severity === 'medium').length;
+    const highSeverity = bottlenecks.filter((b) => b.severity === 'high').length;
+    const mediumSeverity = bottlenecks.filter((b) => b.severity === 'medium').length;
 
     let estimatedImprovement = 'Minor';
     if (highSeverity > 3 || (highSeverity > 0 && mediumSeverity > 5)) {
@@ -3838,16 +4029,20 @@ export class AntlrAnalyzer {
     }
 
     // Generate recommendations
-    if (bottlenecks.some(b => b.type === 'high-branching' && b.severity === 'high')) {
+    if (bottlenecks.some((b) => b.type === 'high-branching' && b.severity === 'high')) {
       recommendations.push('🔥 Critical: Split high-branching rules into hierarchical sub-rules');
     }
-    if (bottlenecks.some(b => b.type === 'tilde-negation')) {
-      recommendations.push('💡 Consider using lexer modes for line-based content instead of tilde negation');
+    if (bottlenecks.some((b) => b.type === 'tilde-negation')) {
+      recommendations.push(
+        '💡 Consider using lexer modes for line-based content instead of tilde negation'
+      );
     }
-    if (bottlenecks.some(b => b.type === 'missing-mode')) {
-      recommendations.push('🎯 Add lexer modes for structured content (strings, comments, data blocks)');
+    if (bottlenecks.some((b) => b.type === 'missing-mode')) {
+      recommendations.push(
+        '🎯 Add lexer modes for structured content (strings, comments, data blocks)'
+      );
     }
-    if (bottlenecks.some(b => b.type === 'deep-recursion')) {
+    if (bottlenecks.some((b) => b.type === 'deep-recursion')) {
       recommendations.push('⚠️ Review recursive rules for potential stack overflow issues');
     }
     if (literalKeywords.length > 50) {
@@ -3855,8 +4050,11 @@ export class AntlrAnalyzer {
     }
 
     // Deduplicate bottlenecks
-    const uniqueBottlenecks = bottlenecks.filter((b, i, arr) =>
-      arr.findIndex(b2 => b2.type === b.type && b2.ruleName === b.ruleName && b2.lineNumber === b.lineNumber) === i
+    const uniqueBottlenecks = bottlenecks.filter(
+      (b, i, arr) =>
+        arr.findIndex(
+          (b2) => b2.type === b.type && b2.ruleName === b.ruleName && b2.lineNumber === b.lineNumber
+        ) === i
     );
 
     // Sort by severity
@@ -3868,9 +4066,9 @@ export class AntlrAnalyzer {
       metrics: {
         totalBottlenecks: uniqueBottlenecks.length,
         highSeverity,
-        estimatedImprovement
+        estimatedImprovement,
       },
-      recommendations
+      recommendations,
     };
   }
 
@@ -3913,7 +4111,7 @@ export class AntlrAnalyzer {
         severity: 'low',
         description: `Grammar has ${existingModes.length} mode(s), consider expanding for more context-sensitive parsing`,
         suggestion: 'Add modes for strings, comments, or structured data blocks',
-        impact: 'Improved tokenization accuracy and performance'
+        impact: 'Improved tokenization accuracy and performance',
       });
     }
 
@@ -3933,19 +4131,21 @@ export class AntlrAnalyzer {
       opportunities.push({
         severity: 'medium',
         description: `${lineBasedRules} rules use line-based content patterns`,
-        suggestion: 'Create a M_LineContent mode triggered by keywords like "description", "remark", "hostname"',
-        impact: 'Cleaner grammar, better error messages, faster tokenization'
+        suggestion:
+          'Create a M_LineContent mode triggered by keywords like "description", "remark", "hostname"',
+        impact: 'Cleaner grammar, better error messages, faster tokenization',
       });
     }
 
     // Look for string/quoted content without modes
-    const stringRules = analysis.rules.filter(r =>
-      r.definition.includes('QUOTE') ||
-      r.definition.includes("'\"'") ||
-      r.name.match(/STRING|TEXT/i) ||
-      r.definition.match(/["']~["']/) ||  // String with tilde negation
-      r.definition.match(/"[^"]*"/) ||    // Contains double-quoted literal
-      r.definition.match(/'[^']*'/)       // Contains single-quoted literal
+    const stringRules = analysis.rules.filter(
+      (r) =>
+        r.definition.includes('QUOTE') ||
+        r.definition.includes("'\"'") ||
+        r.name.match(/STRING|TEXT/i) ||
+        r.definition.match(/["']~["']/) || // String with tilde negation
+        r.definition.match(/"[^"]*"/) || // Contains double-quoted literal
+        r.definition.match(/'[^']*'/) // Contains single-quoted literal
     );
 
     if (stringRules.length > 0 && existingModes.length === 0) {
@@ -3953,7 +4153,7 @@ export class AntlrAnalyzer {
         severity: 'medium',
         description: 'Grammar handles string/quoted content without lexer modes',
         suggestion: 'Add M_String mode for handling escape sequences and interpolation',
-        impact: 'Better string handling, support for escape sequences and interpolation'
+        impact: 'Better string handling, support for escape sequences and interpolation',
       });
     }
 
@@ -3964,7 +4164,7 @@ export class AntlrAnalyzer {
         severity: 'low',
         description: 'Grammar may handle multi-line blocks (certificates, keys)',
         suggestion: 'Add dedicated mode for multi-line data blocks',
-        impact: 'Cleaner handling of PEM-encoded data or configuration blocks'
+        impact: 'Cleaner handling of PEM-encoded data or configuration blocks',
       });
     }
 
@@ -3979,7 +4179,7 @@ export class AntlrAnalyzer {
   ): number {
     if (depth > 10) return depth; // Prevent infinite loops
 
-    const rule = rules.find(r => r.name === ruleName);
+    const rule = rules.find((r) => r.name === ruleName);
     if (!rule) return depth;
 
     // Check for direct self-reference (immediate recursion)
@@ -4027,7 +4227,6 @@ export class AntlrAnalyzer {
   } {
     const iterations = options?.iterations || 10;
     const warmupIterations = options?.warmupIterations || 3;
-    const errors: string[] = [];
     const suggestions: string[] = [];
 
     // First, do a preview to check if input can be tokenized
@@ -4045,22 +4244,22 @@ export class AntlrAnalyzer {
           minTimeMs: 0,
           maxTimeMs: 0,
           tokensPerSecond: 0,
-          iterations: 0
+          iterations: 0,
         },
         tokens: preview.tokens.length > 0 ? preview.tokens : undefined,
-        errors: preview.errors.map(e => `Position ${e.position}: ${e.message}`),
+        errors: preview.errors.map((e) => `Position ${e.position}: ${e.message}`),
         performanceRating: 'slow',
         suggestions: hasPartialMatch
           ? [
               'Tokenization partially succeeded but had errors',
               'Check for lexer rules that may not be matching correctly',
-              'Ensure all literal tokens have explicit lexer rules'
+              'Ensure all literal tokens have explicit lexer rules',
             ]
           : [
               'Tokenization failed completely',
               'Check if grammar has valid lexer rules',
-              'For complex grammars, consider using native ANTLR4 runtime for accurate benchmarking'
-            ]
+              'For complex grammars, consider using native ANTLR4 runtime for accurate benchmarking',
+            ],
       };
     }
 
@@ -4099,7 +4298,9 @@ export class AntlrAnalyzer {
 
     // Generate suggestions based on performance
     if (performanceRating === 'slow') {
-      suggestions.push('Consider running analyze-bottlenecks to identify optimization opportunities');
+      suggestions.push(
+        'Consider running analyze-bottlenecks to identify optimization opportunities'
+      );
       suggestions.push('Check for high-branching rules that may cause prediction overhead');
 
       const bottlenecks = this.analyzeBottlenecks(grammarContent);
@@ -4124,12 +4325,12 @@ export class AntlrAnalyzer {
         minTimeMs: Math.round(minTimeMs * 100) / 100,
         maxTimeMs: Math.round(maxTimeMs * 100) / 100,
         tokensPerSecond: Math.round(tokensPerSecond),
-        iterations
+        iterations,
       },
       tokens: preview.tokens,
       errors: [],
       performanceRating,
-      suggestions
+      suggestions,
     };
   }
 
@@ -7227,16 +7428,23 @@ export class AntlrAnalyzer {
     const warnings: string[] = [];
 
     const analysis = this.analyze(grammarContent);
-    const parserRules = analysis.rules.filter(r => r.type === 'parser');
-    const lexerRules = analysis.rules.filter(r => r.type === 'lexer' && !r.name.startsWith('fragment'));
+    const lexerRules = analysis.rules.filter(
+      (r) => r.type === 'lexer' && !r.name.startsWith('fragment')
+    );
 
     // Find simple token patterns
     const simpleTokens = lexerRules
-      .filter(r => r.definition.match(/^'[^']+'$/) || r.definition.match(/^\[[^\]]+\]$/))
+      .filter((r) => r.definition.match(/^'[^']+'$/) || r.definition.match(/^\[[^\]]+\]$/))
       .slice(0, 10);
 
     if (simpleTokens.length === 0) {
-      simpleTokens.push({ name: 'A', definition: "'a'", type: 'lexer', lineNumber: 0, referencedRules: [] });
+      simpleTokens.push({
+        name: 'A',
+        definition: "'a'",
+        type: 'lexer',
+        lineNumber: 0,
+        referencedRules: [],
+      });
       warnings.push('No simple tokens found, using placeholder');
     }
 
@@ -7246,9 +7454,12 @@ export class AntlrAnalyzer {
 
     if (strategy === 'nested' || strategy === 'mixed') {
       // Generate nested parentheses/brackets structure
-      const openToken = simpleTokens.find(t => t.definition.match(/^'\('.*$/))?.definition || "'('";
-      const closeToken = simpleTokens.find(t => t.definition.match(/^'\)'.*$/))?.definition || "')'";
-      const innerToken = simpleTokens.find(t => !t.definition.match(/^['(\[].*/))?.definition || "'x'";
+      const openToken =
+        simpleTokens.find((t) => t.definition.match(/^'\('.*$/))?.definition || "'('";
+      const closeToken =
+        simpleTokens.find((t) => t.definition.match(/^'\)'.*$/))?.definition || "')'";
+      const innerToken =
+        simpleTokens.find((t) => !t.definition.match(/^['(\[].*/))?.definition || "'x'";
 
       const nestingDepth = strategy === 'mixed' ? Math.floor(depth / 2) : depth;
       actualDepth = nestingDepth;
@@ -7260,8 +7471,8 @@ export class AntlrAnalyzer {
 
     if (strategy === 'wide' || strategy === 'mixed') {
       // Generate many alternatives separated by a delimiter
-      const delimiter = simpleTokens.find(t => t.definition.match(/^','.*/))?.definition || "','";
-      const item = simpleTokens.find(t => !t.definition.match(/^['(\[].*/))?.definition || "'x'";
+      const delimiter = simpleTokens.find((t) => t.definition.match(/^','.*/))?.definition || "','";
+      const item = simpleTokens.find((t) => !t.definition.match(/^['(\[].*/))?.definition || "'x'";
 
       const itemCount = strategy === 'mixed' ? Math.floor(count / 2) : count;
       actualWidth = itemCount;
@@ -7298,7 +7509,7 @@ export class AntlrAnalyzer {
       depth: actualDepth || undefined,
       width: actualWidth || undefined,
       size: Buffer.byteLength(input, 'utf8'),
-      warnings
+      warnings,
     };
   }
 
@@ -7373,7 +7584,7 @@ export class AntlrAnalyzer {
         after: afterVal,
         changePercent,
         improved,
-        degraded
+        degraded,
       });
     };
 
@@ -7382,11 +7593,16 @@ export class AntlrAnalyzer {
     addMetric('Tree Depth', profile1.treeDepth, profile2.treeDepth, true);
     addMetric('Decisions', profile1.decisionCount, profile2.decisionCount, true);
     addMetric('Ambiguities', profile1.ambiguityCount, profile2.ambiguityCount, true);
-    addMetric('Context Sensitivity', profile1.contextSensitivityCount, profile2.contextSensitivityCount, true);
+    addMetric(
+      'Context Sensitivity',
+      profile1.contextSensitivityCount,
+      profile2.contextSensitivityCount,
+      true
+    );
 
     // Determine verdict
-    const improvedCount = metrics.filter(m => m.improved).length;
-    const degradedCount = metrics.filter(m => m.degraded).length;
+    const improvedCount = metrics.filter((m) => m.improved).length;
+    const degradedCount = metrics.filter((m) => m.degraded).length;
 
     let verdict = '';
     let summary = '';
@@ -7438,8 +7654,8 @@ export class AntlrAnalyzer {
     const analysis1 = this.analyze(grammar1);
     const analysis2 = this.analyze(grammar2);
 
-    const rules1 = new Map(analysis1.rules.map(r => [r.name, r.definition]));
-    const rules2 = new Map(analysis2.rules.map(r => [r.name, r.definition]));
+    const rules1 = new Map(analysis1.rules.map((r) => [r.name, r.definition]));
+    const rules2 = new Map(analysis2.rules.map((r) => [r.name, r.definition]));
 
     const added: string[] = [];
     const removed: string[] = [];
@@ -7461,12 +7677,12 @@ export class AntlrAnalyzer {
       }
     }
 
-    const parserRules1 = analysis1.rules.filter(r => r.type === 'parser').length;
-    const lexerRules1 = analysis1.rules.filter(r => r.type === 'lexer').length;
-    const parserRules2 = analysis2.rules.filter(r => r.type === 'parser').length;
-    const lexerRules2 = analysis2.rules.filter(r => r.type === 'lexer').length;
+    const parserRules1 = analysis1.rules.filter((r) => r.type === 'parser').length;
+    const lexerRules1 = analysis1.rules.filter((r) => r.type === 'lexer').length;
+    const parserRules2 = analysis2.rules.filter((r) => r.type === 'parser').length;
+    const lexerRules2 = analysis2.rules.filter((r) => r.type === 'lexer').length;
 
-    const totalDiff = (parserRules2 + lexerRules2) - (parserRules1 + lexerRules1);
+    const totalDiff = parserRules2 + lexerRules2 - (parserRules1 + lexerRules1);
     let summary = '';
 
     if (added.length === 0 && removed.length === 0 && modified.length === 0) {
@@ -7491,18 +7707,18 @@ export class AntlrAnalyzer {
       grammar1: {
         parserRules: parserRules1,
         lexerRules: lexerRules1,
-        totalRules: parserRules1 + lexerRules1
+        totalRules: parserRules1 + lexerRules1,
       },
       grammar2: {
         parserRules: parserRules2,
         lexerRules: lexerRules2,
-        totalRules: parserRules2 + lexerRules2
+        totalRules: parserRules2 + lexerRules2,
       },
       differences: {
         added,
         removed,
-        modified
-      }
+        modified,
+      },
     };
   }
 }

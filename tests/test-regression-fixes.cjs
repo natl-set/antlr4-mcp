@@ -163,6 +163,43 @@ WS: [ \\t\\r\\n]+ -> skip;
   );
 }
 
+function testImpactAnalysisBasicGraph() {
+  const grammar = `grammar Impact;
+start: expr EOF;
+expr: term (PLUS term)*;
+term: factor;
+factor: ID;
+PLUS: '+';
+ID: [a-z]+;
+WS: [ \\t\\r\\n]+ -> skip;
+`;
+
+  const impact = AntlrAnalyzer.analyzeRuleImpact(grammar, 'term');
+  assert(impact.found, 'impact analysis should find existing rule');
+  assert(impact.directDependencies.includes('factor'), 'term should directly depend on factor');
+  assert(impact.directDependents.includes('expr'), 'term should be directly depended on by expr');
+  assert(
+    impact.transitiveDependents.includes('start'),
+    'term should have start as transitive dependent'
+  );
+}
+
+async function testCompileGrammarResultShape() {
+  const runtime = new Antlr4Runtime();
+  const grammar = `grammar CompileShape;
+start: ID EOF;
+ID: [a-z]+;
+WS: [ \\t\\r\\n]+ -> skip;
+`;
+
+  const result = await runtime.compileGrammar(grammar, { loadImports: false });
+  const hasValidMode = result.mode === 'native' || result.mode === 'simulation';
+  const hasDiagnosticsArray = Array.isArray(result.diagnostics);
+
+  assert(hasValidMode, 'compileGrammar should return native or simulation mode');
+  assert(hasDiagnosticsArray, 'compileGrammar should always return diagnostics array');
+}
+
 function runTests() {
   console.log('Running regression fix tests...\n');
 
@@ -171,13 +208,18 @@ function runTests() {
   testCommentHandlingInAnalyze();
   testLiteralCommentMarkersAreNotStripped();
   testEntryParserRuleNotFlaggedUnused();
+  testImpactAnalysisBasicGraph();
+  return testCompileGrammarResultShape().then(() => {
+    console.log(`\nPassed: ${passCount}`);
+    console.log(`Failed: ${failCount}`);
 
-  console.log(`\nPassed: ${passCount}`);
-  console.log(`Failed: ${failCount}`);
-
-  if (failCount > 0) {
-    process.exit(1);
-  }
+    if (failCount > 0) {
+      process.exit(1);
+    }
+  });
 }
 
-runTests();
+runTests().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

@@ -54,6 +54,21 @@ export interface ParseResult {
   ruleInvoked?: string;
 }
 
+export interface CompileResult {
+  success: boolean;
+  mode: 'native' | 'simulation';
+  diagnostics: Array<{
+    severity: 'error' | 'warning' | 'info';
+    message: string;
+    file?: string;
+    line?: number;
+    column?: number;
+  }>;
+  generatedFiles?: string[];
+  compilationTime?: number;
+  errors?: string[];
+}
+
 /**
  * ANTLR4 Native Runtime Wrapper
  *
@@ -394,32 +409,174 @@ export class Antlr4Runtime {
   }
 
   /**
+   * Compile grammar(s) with native ANTLR4 for strict syntax/tooling validation.
+   */
+  async compileGrammar(
+    grammarContent: string,
+    options: {
+      grammarName?: string;
+      fromFile?: string;
+      basePath?: string;
+      loadImports?: boolean;
+    } = {}
+  ): Promise<CompileResult> {
+    const available = await this.isAvailable();
+    if (!available) {
+      return {
+        success: false,
+        mode: 'simulation',
+        diagnostics: [],
+        errors: [
+          'ANTLR4 runtime not available. Install Java and ANTLR4 for native compile checks.',
+        ],
+      };
+    }
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'antlr4-compile-'));
+
+    try {
+      const grammarName =
+        options.grammarName ||
+        grammarContent.match(/(?:lexer\s+|parser\s+)?grammar\s+(\w+)/)?.[1] ||
+        'TempGrammar';
+      const grammarFilename = options.fromFile
+        ? path.basename(options.fromFile)
+        : `${grammarName}.g4`;
+      const grammarFile = path.join(tmpDir, grammarFilename);
+      fs.writeFileSync(grammarFile, grammarContent, 'utf-8');
+
+      if (options.loadImports) {
+        const importBase =
+          options.basePath || (options.fromFile ? path.dirname(options.fromFile) : undefined);
+        if (importBase) {
+          await this.copyImportedGrammars(grammarContent, importBase, tmpDir);
+        }
+      }
+
+      const compileStart = Date.now();
+      const { stdout, stderr } = await execAsync(`cd ${tmpDir} && ${this.antlr4Command} *.g4`, {
+        timeout: this.config.timeout,
+      });
+      const compilationTime = Date.now() - compileStart;
+
+      const diagnostics = this.parseAntlrDiagnostics(`${stdout}\n${stderr}`);
+      const generatedFiles = fs
+        .readdirSync(tmpDir)
+        .filter((f) => f.endsWith('.java') || f.endsWith('.tokens') || f.endsWith('.interp'))
+        .sort();
+
+      return {
+        success: !diagnostics.some((d) => d.severity === 'error'),
+        mode: 'native',
+        diagnostics,
+        generatedFiles,
+        compilationTime,
+      };
+    } catch (error: any) {
+      const combined = [error.stdout || '', error.stderr || '', error.message || '']
+        .filter(Boolean)
+        .join('\n');
+      const diagnostics = this.parseAntlrDiagnostics(combined);
+      return {
+        success: false,
+        mode: 'native',
+        diagnostics,
+        errors: diagnostics.length > 0 ? undefined : [this.formatError(error)],
+      };
+    } finally {
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  }
+
+  /**
    * Copy imported grammars to temporary directory
    */
   private async copyImportedGrammars(
     grammarContent: string,
     basePath: string,
-    tmpDir: string
+    tmpDir: string,
+    visited: Set<string> = new Set()
   ): Promise<void> {
     const imports = grammarContent.match(/import\s+([^;]+);/g) || [];
+    const tokenVocabMatch = grammarContent.match(/tokenVocab\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\s*;/);
+    const vocabName = tokenVocabMatch?.[1];
+    const importNames = new Set<string>();
 
     for (const imp of imports) {
-      const importNames = imp
+      const names = imp
         .replace(/import\s+|;/g, '')
         .split(',')
         .map((s) => s.trim());
-
-      for (const name of importNames) {
-        const importFile = path.join(basePath, `${name}.g4`);
-        if (fs.existsSync(importFile)) {
-          fs.copyFileSync(importFile, path.join(tmpDir, `${name}.g4`));
-
-          // Recursively copy imports from imported grammars
-          const importedContent = fs.readFileSync(importFile, 'utf-8');
-          await this.copyImportedGrammars(importedContent, basePath, tmpDir);
-        }
+      for (const name of names) {
+        importNames.add(name);
       }
     }
+    if (vocabName) {
+      importNames.add(vocabName);
+    }
+
+    for (const name of importNames) {
+      if (visited.has(name)) {
+        continue;
+      }
+      visited.add(name);
+
+      const importFile = path.join(basePath, `${name}.g4`);
+      if (fs.existsSync(importFile)) {
+        fs.copyFileSync(importFile, path.join(tmpDir, `${name}.g4`));
+
+        // Recursively copy imports from imported grammars
+        const importedContent = fs.readFileSync(importFile, 'utf-8');
+        await this.copyImportedGrammars(importedContent, path.dirname(importFile), tmpDir, visited);
+      }
+    }
+  }
+
+  private parseAntlrDiagnostics(output: string): Array<{
+    severity: 'error' | 'warning' | 'info';
+    message: string;
+    file?: string;
+    line?: number;
+    column?: number;
+  }> {
+    const diagnostics: Array<{
+      severity: 'error' | 'warning' | 'info';
+      message: string;
+      file?: string;
+      line?: number;
+      column?: number;
+    }> = [];
+
+    const lines = output
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+    for (const line of lines) {
+      const match = line.match(/^(error|warning)\(\d+\):\s*([^:]+):(\d+):(\d+):\s*(.+)$/i);
+      if (match) {
+        diagnostics.push({
+          severity: match[1].toLowerCase() as 'error' | 'warning',
+          file: match[2],
+          line: Number(match[3]),
+          column: Number(match[4]),
+          message: match[5],
+        });
+        continue;
+      }
+
+      const lower = line.toLowerCase();
+      if (lower.includes('error')) {
+        diagnostics.push({ severity: 'error', message: line });
+      } else if (lower.includes('warning')) {
+        diagnostics.push({ severity: 'warning', message: line });
+      }
+    }
+
+    return diagnostics;
   }
 
   /**
@@ -559,7 +716,7 @@ export class Antlr4Runtime {
 
       // Detect lexer name
       let lexerName = mainGrammarName;
-      for (const [filename, content] of grammarFiles) {
+      for (const [, content] of grammarFiles) {
         const lexerMatch = content.match(/lexer\s+grammar\s+(\w+)/);
         if (lexerMatch) {
           lexerName = lexerMatch[1];
@@ -654,10 +811,9 @@ public class Benchmark {
       });
 
       // Compile Java
-      await execAsync(
-        `cd ${tmpDir} && javac -cp "${this.getClasspath()}" *.java`,
-        { timeout: this.config.timeout }
-      );
+      await execAsync(`cd ${tmpDir} && javac -cp "${this.getClasspath()}" *.java`, {
+        timeout: this.config.timeout,
+      });
 
       // Run benchmark
       const { stdout, stderr } = await execAsync(
@@ -783,7 +939,7 @@ public class Benchmark {
 
       // Detect lexer name
       let lexerName = mainGrammarName;
-      for (const [filename, content] of grammarFiles) {
+      for (const [, content] of grammarFiles) {
         const lexerMatch = content.match(/lexer\s+grammar\s+(\w+)/);
         if (lexerMatch) {
           lexerName = lexerMatch[1];
@@ -917,13 +1073,12 @@ public class Profiler extends DiagnosticErrorListener {
       });
 
       // Compile Java
-      await execAsync(
-        `cd ${tmpDir} && javac -cp "${this.getClasspath()}" *.java`,
-        { timeout: this.config.timeout }
-      );
+      await execAsync(`cd ${tmpDir} && javac -cp "${this.getClasspath()}" *.java`, {
+        timeout: this.config.timeout,
+      });
 
       // Run profiler
-      const { stdout, stderr } = await execAsync(
+      const { stdout } = await execAsync(
         `cd ${tmpDir} && java -cp ".:${this.getClasspath()}" Profiler`,
         { timeout: this.config.timeout }
       );
@@ -934,16 +1089,24 @@ public class Profiler extends DiagnosticErrorListener {
       // Build suggestions based on profile
       const suggestions: string[] = [];
       if (result.ambiguityCount > 0) {
-        suggestions.push(`${result.ambiguityCount} ambiguities detected - consider restructuring alternatives`);
+        suggestions.push(
+          `${result.ambiguityCount} ambiguities detected - consider restructuring alternatives`
+        );
       }
       if (result.contextSensitivityCount > 10) {
-        suggestions.push(`High context sensitivity (${result.contextSensitivityCount}) - grammar may benefit from left-factoring`);
+        suggestions.push(
+          `High context sensitivity (${result.contextSensitivityCount}) - grammar may benefit from left-factoring`
+        );
       }
       if (result.treeDepth > 100) {
-        suggestions.push(`Deep parse tree (${result.treeDepth} levels) - check for excessive nesting`);
+        suggestions.push(
+          `Deep parse tree (${result.treeDepth} levels) - check for excessive nesting`
+        );
       }
 
-      const rulesInvoked = result.ruleInvocations.map((r: { rule: string; count: number }) => r.rule);
+      const rulesInvoked = result.ruleInvocations.map(
+        (r: { rule: string; count: number }) => r.rule
+      );
 
       return {
         success: true,
@@ -1120,12 +1283,22 @@ public class Visualizer {
       fs.writeFileSync(path.join(tmpDir, 'Visualizer.java'), visualizerJava, 'utf-8');
 
       // Compile
-      const g4Files = Array.from(grammarFiles.keys()).filter(f => f.endsWith('.g4')).map(f => path.basename(f)).join(' ');
-      await execAsync(`cd ${tmpDir} && ${this.antlr4Command} ${g4Files}`, { timeout: this.config.timeout });
-      await execAsync(`cd ${tmpDir} && javac -cp ".:${this.getClasspath()}" *.java`, { timeout: this.config.timeout });
+      const g4Files = Array.from(grammarFiles.keys())
+        .filter((f) => f.endsWith('.g4'))
+        .map((f) => path.basename(f))
+        .join(' ');
+      await execAsync(`cd ${tmpDir} && ${this.antlr4Command} ${g4Files}`, {
+        timeout: this.config.timeout,
+      });
+      await execAsync(`cd ${tmpDir} && javac -cp ".:${this.getClasspath()}" *.java`, {
+        timeout: this.config.timeout,
+      });
 
       // Run
-      const { stdout, stderr } = await execAsync(`cd ${tmpDir} && java -cp ".:${this.getClasspath()}" Visualizer`, { timeout: this.config.timeout });
+      const { stdout } = await execAsync(
+        `cd ${tmpDir} && java -cp ".:${this.getClasspath()}" Visualizer`,
+        { timeout: this.config.timeout }
+      );
       const result = JSON.parse(stdout.trim());
 
       return {
@@ -1145,7 +1318,9 @@ public class Visualizer {
         errors: [this.formatError(error)],
       };
     } finally {
-      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      } catch {}
     }
   }
 
@@ -1169,8 +1344,6 @@ public class Visualizer {
   } {
     const analysis = this.analyze(grammarContent);
     const maxSize = options.maxSize || 1000;
-    const targetRule = options.targetRule;
-
     const inputs: Array<{ input: string; description: string; expectedSize: number }> = [];
     const coveredRules = new Set<string>();
 
@@ -1200,22 +1373,25 @@ public class Visualizer {
 
     // 2. Token sequence
     if (literalTokens.length >= 3) {
-      const sequence = literalTokens.slice(0, 5).map(t => t.value).join(' ');
+      const sequence = literalTokens
+        .slice(0, 5)
+        .map((t) => t.value)
+        .join(' ');
       const repetitions = Math.floor(maxSize / sequence.length);
       inputs.push({
         input: sequence.repeat(Math.min(repetitions, 20)),
         description: 'Alternating token sequence',
         expectedSize: sequence.length * Math.min(repetitions, 20),
       });
-      literalTokens.slice(0, 5).forEach(t => coveredRules.add(t.name));
+      literalTokens.slice(0, 5).forEach((t) => coveredRules.add(t.name));
     }
 
     // 3. Nested structures (if we detect recursive rules)
     for (const rule of analysis.rules) {
       if (rule.type === 'parser' && rule.referencedRules.includes(rule.name)) {
         // Found recursive rule - generate nested input
-        const matchingTokens = literalTokens.filter(t =>
-          rule.definition.includes(t.name) || rule.definition.includes(`'${t.value}'`)
+        const matchingTokens = literalTokens.filter(
+          (t) => rule.definition.includes(t.name) || rule.definition.includes(`'${t.value}'`)
         );
         if (matchingTokens.length > 0) {
           const token = matchingTokens[0].value;
@@ -1235,13 +1411,13 @@ public class Visualizer {
 
     // 4. All unique tokens
     if (literalTokens.length > 0) {
-      const allTokens = literalTokens.map(t => t.value).join(' ');
+      const allTokens = literalTokens.map((t) => t.value).join(' ');
       inputs.push({
         input: allTokens,
         description: `All ${literalTokens.length} unique tokens`,
         expectedSize: allTokens.length,
       });
-      literalTokens.forEach(t => coveredRules.add(t.name));
+      literalTokens.forEach((t) => coveredRules.add(t.name));
     }
 
     return {
@@ -1252,7 +1428,12 @@ public class Visualizer {
 
   private analyze(grammarContent: string): any {
     // Simple inline analysis - avoid circular dependency
-    const rules: Array<{ name: string; type: string; definition: string; referencedRules: string[] }> = [];
+    const rules: Array<{
+      name: string;
+      type: string;
+      definition: string;
+      referencedRules: string[];
+    }> = [];
     const lines = grammarContent.split('\n');
     let inBlock = false;
     let currentRule = '';
@@ -1264,7 +1445,10 @@ public class Visualizer {
 
       if (trimmed.startsWith('/*') || trimmed.startsWith('//')) continue;
       if (trimmed.startsWith('/*')) inBlock = true;
-      if (inBlock && trimmed.includes('*/')) { inBlock = false; continue; }
+      if (inBlock && trimmed.includes('*/')) {
+        inBlock = false;
+        continue;
+      }
       if (inBlock) continue;
 
       const ruleMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*:/);
@@ -1301,11 +1485,23 @@ public class Visualizer {
    */
   static compareProfiles(
     profile1: {
-      profile: { parseTimeMs: number; tokenCount: number; treeDepth: number; ambiguityCount: number; contextSensitivityCount: number };
+      profile: {
+        parseTimeMs: number;
+        tokenCount: number;
+        treeDepth: number;
+        ambiguityCount: number;
+        contextSensitivityCount: number;
+      };
       rules: { byFrequency: Array<{ rule: string; count: number }> };
     },
     profile2: {
-      profile: { parseTimeMs: number; tokenCount: number; treeDepth: number; ambiguityCount: number; contextSensitivityCount: number };
+      profile: {
+        parseTimeMs: number;
+        tokenCount: number;
+        treeDepth: number;
+        ambiguityCount: number;
+        contextSensitivityCount: number;
+      };
       rules: { byFrequency: Array<{ rule: string; count: number }> };
     },
     labels: { profile1: string; profile2: string } = { profile1: 'Before', profile2: 'After' }
@@ -1323,9 +1519,13 @@ public class Visualizer {
     const improvements: string[] = [];
     const regressions: string[] = [];
 
-    const parseTimeChange = ((profile2.profile.parseTimeMs - profile1.profile.parseTimeMs) / profile1.profile.parseTimeMs) * 100;
+    const parseTimeChange =
+      ((profile2.profile.parseTimeMs - profile1.profile.parseTimeMs) /
+        profile1.profile.parseTimeMs) *
+      100;
     const ambiguityChange = profile2.profile.ambiguityCount - profile1.profile.ambiguityCount;
-    const contextSensitivityChange = profile2.profile.contextSensitivityCount - profile1.profile.contextSensitivityCount;
+    const contextSensitivityChange =
+      profile2.profile.contextSensitivityCount - profile1.profile.contextSensitivityCount;
     const tokenCountMatch = profile1.profile.tokenCount === profile2.profile.tokenCount;
 
     // Analyze changes
@@ -1348,7 +1548,9 @@ public class Visualizer {
     }
 
     if (!tokenCountMatch) {
-      regressions.push(`Token count mismatch: ${profile1.profile.tokenCount} vs ${profile2.profile.tokenCount}`);
+      regressions.push(
+        `Token count mismatch: ${profile1.profile.tokenCount} vs ${profile2.profile.tokenCount}`
+      );
     }
 
     // Generate summary

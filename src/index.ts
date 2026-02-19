@@ -247,6 +247,48 @@ Returns: List of issues with severity (error/warning/info), descriptions, line n
     },
   },
   {
+    name: 'compile-grammar',
+    description: `Run native ANTLR4 compilation checks for grammar syntax/tooling errors.
+
+**When to use:** Before committing grammar edits, after refactors, or when validate-grammar looks clean but ANTLR toolchain still fails.
+
+Supports:
+- ANTLR4 native diagnostics (error/warning with line/column)
+- Multi-file imports/tokenVocab with load_imports=true and from_file
+- Compile timing and generated file summary
+
+Example usage:
+  from_file: "MyGrammar.g4"
+  load_imports: true
+
+Returns: compile success/failure, native diagnostics, timing, generated artifacts.`,
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        grammar_content: {
+          type: 'string',
+          description: 'The ANTLR4 grammar content (optional when from_file is provided)',
+        },
+        from_file: {
+          type: 'string',
+          description:
+            'Optional: path to grammar file to compile (recommended for import-aware checks)',
+        },
+        base_path: {
+          type: 'string',
+          description:
+            'Optional: base directory for resolving imports/tokenVocab. Defaults to from_file directory.',
+        },
+        load_imports: {
+          type: 'boolean',
+          description:
+            'Optional: if true, loads imported grammars and tokenVocab grammars before compile. Default: true.',
+        },
+      },
+      required: ['grammar_content'],
+    },
+  },
+  {
     name: 'list-rules',
     description: `List all rules in an ANTLR4 grammar with optional filtering.
 
@@ -709,11 +751,13 @@ Returns: Modified grammar with rule and all references renamed, update count, fi
       properties: {
         grammar_content: {
           type: 'string',
-          description: 'The ANTLR4 grammar file content (ignored if from_file and load_imports are set)',
+          description:
+            'The ANTLR4 grammar file content (ignored if from_file and load_imports are set)',
         },
         from_file: {
           type: 'string',
-          description: 'Optional: path to a grammar file to read. Required if using write_to_file or load_imports.',
+          description:
+            'Optional: path to a grammar file to read. Required if using write_to_file or load_imports.',
         },
         old_name: {
           type: 'string',
@@ -726,7 +770,8 @@ Returns: Modified grammar with rule and all references renamed, update count, fi
         },
         base_path: {
           type: 'string',
-          description: 'Optional: base directory for resolving imports. Required for multi-file grammars.',
+          description:
+            'Optional: base directory for resolving imports. Required for multi-file grammars.',
         },
         load_imports: {
           type: 'boolean',
@@ -834,6 +879,37 @@ Use cases:
         rule_name: {
           type: 'string',
           description: 'The name of the rule to analyze (case-sensitive)',
+        },
+      },
+      required: ['grammar_content', 'rule_name'],
+    },
+  },
+  {
+    name: 'impact-analysis',
+    description: `Analyze change impact for a specific rule (dependencies, dependents, and risk).
+
+**When to use:** Before renaming, deleting, or heavily modifying a rule.
+
+Returns:
+- Direct/transitive dependencies (what this rule needs)
+- Direct/transitive dependents (what would be affected)
+- Usage count and recursion status
+- Entry-rule detection and risk level
+- Actionable impact summary`,
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        grammar_content: {
+          type: 'string',
+          description: 'The ANTLR4 grammar content',
+        },
+        from_file: {
+          type: 'string',
+          description: 'Optional: path to grammar file to analyze',
+        },
+        rule_name: {
+          type: 'string',
+          description: 'Rule name to analyze for downstream and upstream impact',
         },
       },
       required: ['grammar_content', 'rule_name'],
@@ -3212,12 +3288,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       } else if (argsObj.from_file && typeof argsObj.from_file === 'string') {
         try {
           grammarContent = fs.readFileSync(argsObj.from_file, 'utf-8');
-          console.error(`[ANTLR4-MCP] Read from file: ${argsObj.from_file} (${grammarContent.length} chars)`);
+          console.error(
+            `[ANTLR4-MCP] Read from file: ${argsObj.from_file} (${grammarContent.length} chars)`
+          );
         } catch (readError) {
           console.error(`[ANTLR4-MCP] Failed to read file: ${argsObj.from_file}`, readError);
         }
       } else {
-        console.error(`[ANTLR4-MCP] No grammar content available. grammar_content: "${grammarContentStr}", from_file: "${argsObj.from_file}"`);
+        console.error(
+          `[ANTLR4-MCP] No grammar content available. grammar_content: "${grammarContentStr}", from_file: "${argsObj.from_file}"`
+        );
       }
 
       // Read grammar 2 (for compare-grammars) - prioritize from_file2 if grammar2_content is empty or placeholder
@@ -3247,12 +3327,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             case 'overview':
               helpText = `# ANTLR4 MCP Server - Tool Overview
 
-This server provides 40 specialized tools for working with ANTLR4 grammars, organized into 5 categories:
+This server provides 42 specialized tools for working with ANTLR4 grammars, organized into 5 categories:
 
-## 📊 Analysis & Inspection (14 tools)
+## 📊 Analysis & Inspection (15 tools)
 Extract structure, validate syntax, find rules, compare grammars, detect ambiguities. **Now with metrics and security scanning!**
 
-Tools: analyze-grammar ⭐, validate-grammar ⭐, list-rules, find-rule, format-grammar, get-suggestions, compare-grammars, analyze-ambiguities, analyze-lexer-modes ⭐, analyze-mode-transitions, list-mode-rules, grammar-metrics ⭐, detect-redos ⭐, check-style
+Tools: analyze-grammar ⭐, validate-grammar ⭐, compile-grammar ⭐, list-rules, find-rule, format-grammar, get-suggestions, compare-grammars, analyze-ambiguities, analyze-lexer-modes ⭐, analyze-mode-transitions, list-mode-rules, grammar-metrics ⭐, detect-redos ⭐, check-style
 
 **When to use:** Exploring grammars, understanding structure, finding issues, analyzing dependencies, detecting ambiguities, measuring complexity, security auditing. Use load_imports: true for multi-file projects.
 
@@ -3263,17 +3343,17 @@ Tools: add-lexer-rule, add-parser-rule, remove-rule, update-rule, rename-rule, a
 
 **When to use:** Creating new grammars, adding rules, modifying definitions, refactoring names, batch token generation, managing lexer modes, scaffolding grammar structure.
 
-## 🔧 Refactoring & Optimization (7 tools)
+## 🔧 Refactoring & Optimization (8 tools)
 Find rule usages, analyze complexity/dependencies, extract fragments, merge/inline/sort/move rules.
 
-Tools: find-rule-usages ⭐, rule-statistics, extract-fragment, merge-rules, inline-rule, sort-rules, move-rule ⭐
+Tools: find-rule-usages ⭐, impact-analysis ⭐, rule-statistics, extract-fragment, merge-rules, inline-rule, sort-rules, move-rule ⭐
 
 **When to use:** Optimizing grammars, reducing duplication, understanding dependencies, safe refactoring, organizing large grammars, repositioning rules.
 
-## 🧪 Testing & Validation (2 tools)
-Test lexer tokenization and parser rule matching instantly without compilation! **Supports multi-file grammars!**
+## 🧪 Testing & Validation (3 tools)
+Test lexer/parser behavior quickly and run native compile checks when needed. **Supports multi-file grammars!**
 
-Tools: preview-tokens, test-parser-rule ⭐
+Tools: preview-tokens, test-parser-rule ⭐, compile-grammar ⭐
 
 **When to use:** Quick validation during development, testing grammar changes without full ANTLR build cycle, testing rules across imports.
 
@@ -3301,11 +3381,14 @@ Tools: export-as-markdown, generate-summary
 - **from_file fallback**: Tools automatically read from from_file when grammar_content is empty
 - move-rule: Reposition rules before/after other rules
 - Enhanced find-rule-usages: Context info + multi-file search
+- compile-grammar: Native ANTLR4 compile diagnostics with line/column reporting
+- impact-analysis: Downstream/upstream rule impact + risk level before refactoring
 
 **💡 QUICK START:** When exploring an unfamiliar grammar, start with:
 1. analyze-grammar - Get complete structure (use load_imports: true for multi-file)
 2. validate-grammar - Check for issues (use load_imports: true for multi-file)
-3. generate-summary - View health metrics
+3. compile-grammar - Confirm ANTLR toolchain compatibility
+4. generate-summary - View health metrics
 
 For help on specific categories, use:
 - topic: "analysis" for analysis tool details
@@ -3342,6 +3425,7 @@ For multiple rules: Use **add-lexer-rules**, **add-parser-rules**, or **add-rule
 2. **rule-statistics** - Analyze complexity and dependencies
 3. **rename-rule** with load_imports: true and write_to_file: true - Rename across all files
 4. **validate-grammar** with load_imports: true - Verify no issues introduced
+5. **compile-grammar** with load_imports: true - Native ANTLR check before commit
 
 Example: Rename "expr" to "expression"
   find-rule-usages: rule_name="expr", load_imports=true
@@ -3368,6 +3452,7 @@ Example: Reorganize grammar
 4. **test-parser-rule** - Verify changes work
 5. **analyze-ambiguities** - Check for new ambiguities
 6. **validate-grammar** - Final syntax check
+7. **compile-grammar** - Confirm no ANTLR toolchain errors
 
 Example: Test multi-file parser rule
   test-parser-rule: rule_name="srs_group_tag", input="group-tag \"Value\"", from_file="PaloAlto_rulebase.g4", load_imports=true
@@ -3391,6 +3476,7 @@ Example: Test multi-file parser rule
 3. **validate-grammar** with load_imports: true - Validate with lexer imports (tokenVocab resolved)
 4. **test-parser-rule** with load_imports: true - Test with full context
 5. **rename-rule** with load_imports: true - Rename across all imported files
+6. **compile-grammar** with load_imports: true - Native compile verification across loaded files
 
 **New in v2.2:** tokenVocab lexer tokens are correctly resolved during validation!
 
@@ -3413,6 +3499,12 @@ Example: Test multi-file parser rule
 **Multi-file:** Use load_imports: true to validate with lexer imports (tokenVocab)
 **Use when:** After making changes, or diagnosing problems
 **Note:** With load_imports=true, lexer tokens from tokenVocab are correctly resolved
+
+## compile-grammar ⭐ NEW
+**Purpose:** Run native ANTLR4 compile checks and return toolchain diagnostics
+**Returns:** Error/warning diagnostics with file:line:column, compile timing, generated artifact count
+**Multi-file:** Use load_imports: true with from_file for import/tokenVocab-aware checks
+**Use when:** Before commit, after refactors, or when validate-grammar is clean but ANTLR still fails
 
 ## analyze-ambiguities ⭐ NEW
 **Purpose:** Static analysis for common ANTLR4 ambiguity patterns
@@ -3568,6 +3660,15 @@ Set this parameter to automatically save changes to the grammar file.`;
   - Placing dependencies before dependents
   - Following team style guides
   - Improving readability
+
+## impact-analysis ⭐ NEW
+**Purpose:** Estimate blast radius before changing a rule
+**Returns:**
+  - Direct/transitive dependents (what breaks if changed)
+  - Direct/transitive dependencies (what this rule relies on)
+  - Usage count, recursion status, entry-rule detection
+  - Risk level (low/medium/high/critical)
+**Use before:** Renaming, deleting, inlining, or major rewrites
 
 ## rule-statistics
 **Purpose:** Analyze rule complexity and dependencies
@@ -3866,6 +3967,50 @@ Output: Complete Markdown documentation`;
           };
         }
 
+        case 'compile-grammar': {
+          const fromFile = (argsObj.from_file as string) || undefined;
+          const basePath = (argsObj.base_path as string) || undefined;
+          const loadImports = (argsObj.load_imports as boolean) ?? true;
+          const runtime = getRuntime();
+          const result = await runtime.compileGrammar(grammarContent, {
+            fromFile,
+            basePath,
+            loadImports,
+          });
+
+          const header = result.success
+            ? 'Native compile check passed.'
+            : 'Native compile check failed.';
+          let text = `${header}\n`;
+          text += `Mode: ${result.mode}\n`;
+          if (result.compilationTime !== undefined) {
+            text += `Compile time: ${result.compilationTime}ms\n`;
+          }
+          if (result.generatedFiles && result.generatedFiles.length > 0) {
+            text += `Generated files: ${result.generatedFiles.length}\n`;
+          }
+
+          if (result.diagnostics.length > 0) {
+            text += `\nDiagnostics:\n`;
+            for (const d of result.diagnostics) {
+              const location =
+                d.file && d.line !== undefined && d.column !== undefined
+                  ? `${d.file}:${d.line}:${d.column}`
+                  : d.file && d.line !== undefined
+                    ? `${d.file}:${d.line}`
+                    : d.file || '';
+              text += `- [${d.severity.toUpperCase()}] ${location ? `${location} ` : ''}${d.message}\n`;
+            }
+          } else if (result.errors && result.errors.length > 0) {
+            text += `\nErrors:\n${result.errors.map((e) => `- ${e}`).join('\n')}`;
+          }
+
+          return {
+            content: [{ type: 'text', text } as TextContent],
+            isError: !result.success,
+          };
+        }
+
         case 'infer-formatting': {
           const formatting = AntlrAnalyzer.inferFormatting(grammarContent);
           const text = `Detected Formatting Style:
@@ -4067,13 +4212,23 @@ Note: The update-rule, add-lexer-rule, and add-parser-rule tools automatically p
           // Input validation
           if (!grammarContent || grammarContent.trim() === '') {
             return {
-              content: [{ type: 'text', text: 'Error: grammar1_content or from_file1 is required' } as TextContent],
+              content: [
+                {
+                  type: 'text',
+                  text: 'Error: grammar1_content or from_file1 is required',
+                } as TextContent,
+              ],
               isError: true,
             };
           }
           if (!grammar2Content || grammar2Content.trim() === '') {
             return {
-              content: [{ type: 'text', text: 'Error: grammar2_content or from_file2 is required' } as TextContent],
+              content: [
+                {
+                  type: 'text',
+                  text: 'Error: grammar2_content or from_file2 is required',
+                } as TextContent,
+              ],
               isError: true,
             };
           }
@@ -4344,7 +4499,9 @@ Note: The update-rule, add-lexer-rule, and add-parser-rule tools automatically p
 
               // Show per-file breakdown
               for (const mod of result.modifiedFiles) {
-                const relativePath = basePath ? path.relative(basePath, mod.filePath) : mod.filePath;
+                const relativePath = basePath
+                  ? path.relative(basePath, mod.filePath)
+                  : mod.filePath;
                 text += `📄 ${relativePath}: ${mod.refCount} occurrence(s)\n`;
               }
 
@@ -4352,7 +4509,9 @@ Note: The update-rule, add-lexer-rule, and add-parser-rule tools automatically p
               if (outputMode !== 'none') {
                 for (const mod of result.modifiedFiles) {
                   const originalContent = fs.readFileSync(mod.filePath, 'utf-8');
-                  const relativePath = basePath ? path.relative(basePath, mod.filePath) : mod.filePath;
+                  const relativePath = basePath
+                    ? path.relative(basePath, mod.filePath)
+                    : mod.filePath;
 
                   if (outputMode === 'diff') {
                     const diff = generateUnifiedDiff(originalContent, mod.content, relativePath);
@@ -4367,7 +4526,9 @@ Note: The update-rule, add-lexer-rule, and add-parser-rule tools automatically p
               if (writeToFile) {
                 for (const mod of result.modifiedFiles) {
                   const writeResult = safeWriteFile(mod.filePath, mod.content);
-                  const relativePath = basePath ? path.relative(basePath, mod.filePath) : mod.filePath;
+                  const relativePath = basePath
+                    ? path.relative(basePath, mod.filePath)
+                    : mod.filePath;
                   text += `\n${writeResult.message} (${relativePath})`;
                 }
               }
@@ -4501,6 +4662,49 @@ Note: The update-rule, add-lexer-rule, and add-parser-rule tools automatically p
           };
         }
 
+        case 'impact-analysis': {
+          const ruleName = (argsObj.rule_name as string) || '';
+          const impact = AntlrAnalyzer.analyzeRuleImpact(grammarContent, ruleName);
+
+          if (!impact.found) {
+            return {
+              content: [{ type: 'text', text: impact.summary } as TextContent],
+              isError: true,
+            };
+          }
+
+          let text = `Impact Analysis: ${impact.ruleName}\n`;
+          text += `${'='.repeat(48)}\n\n`;
+          text += `Type: ${impact.type}\n`;
+          text += `Risk level: ${impact.riskLevel.toUpperCase()}\n`;
+          text += `Entry rule: ${impact.isEntryRule ? 'Yes' : 'No'}\n`;
+          text += `Recursive: ${impact.isRecursive ? 'Yes' : 'No'}\n`;
+          text += `Usage count: ${impact.usageCount}\n`;
+          text += `Direct dependents: ${impact.directDependents.length}\n`;
+          text += `Transitive dependents: ${impact.transitiveDependents.length}\n`;
+          text += `Direct dependencies: ${impact.directDependencies.length}\n`;
+          text += `Transitive dependencies: ${impact.transitiveDependencies.length}\n\n`;
+
+          if (impact.directDependents.length > 0) {
+            text += `Direct dependents:\n- ${impact.directDependents.join('\n- ')}\n\n`;
+          }
+          if (impact.directDependencies.length > 0) {
+            text += `Direct dependencies:\n- ${impact.directDependencies.join('\n- ')}\n\n`;
+          }
+          if (impact.transitiveDependents.length > 0) {
+            text += `Transitive dependents:\n- ${impact.transitiveDependents.join('\n- ')}\n\n`;
+          }
+          if (impact.transitiveDependencies.length > 0) {
+            text += `Transitive dependencies:\n- ${impact.transitiveDependencies.join('\n- ')}\n\n`;
+          }
+
+          text += `Summary: ${impact.summary}`;
+
+          return {
+            content: [{ type: 'text', text } as TextContent],
+          };
+        }
+
         case 'extract-fragment': {
           const fragmentName = (argsObj.fragment_name as string) || '';
           const pattern = (argsObj.pattern as string) || '';
@@ -4571,7 +4775,6 @@ Note: The update-rule, add-lexer-rule, and add-parser-rule tools automatically p
           };
         }
 
-
         case 'add-parser-rules': {
           const rules = argsObj.rules as Array<{
             name: string;
@@ -4612,7 +4815,11 @@ Note: The update-rule, add-lexer-rule, and add-parser-rule tools automatically p
 
           if (result.success) {
             if (outputMode === 'diff') {
-              const diff = generateUnifiedDiff(grammarContent, result.modified, fromFile || 'grammar.g4');
+              const diff = generateUnifiedDiff(
+                grammarContent,
+                result.modified,
+                fromFile || 'grammar.g4'
+              );
               output = `${details}\n\n${diff}`;
             } else if (outputMode === 'none') {
               output = details;
@@ -4692,7 +4899,11 @@ ${writeResult.message}`;
           const details = output.split('\n\nModified grammar:\n')[0];
           if (result.success) {
             if (outputMode === 'diff') {
-              const diff = generateUnifiedDiff(grammarContent, result.modified, fromFile || 'grammar.g4');
+              const diff = generateUnifiedDiff(
+                grammarContent,
+                result.modified,
+                fromFile || 'grammar.g4'
+              );
               output = `${details}\n\n${diff}`;
             } else if (outputMode === 'none') {
               output = details;
@@ -5565,8 +5776,8 @@ ${writeResult.message}`;
           // Issues
           if (result.issues.length > 0) {
             output += `## Issues\n\n`;
-            const errors = result.issues.filter(i => i.type === 'error');
-            const warnings = result.issues.filter(i => i.type === 'warning');
+            const errors = result.issues.filter((i) => i.type === 'error');
+            const warnings = result.issues.filter((i) => i.type === 'warning');
 
             if (errors.length > 0) {
               output += `🔴 ERRORS:\n`;
@@ -5598,7 +5809,7 @@ ${writeResult.message}`;
                 text: output,
               } as TextContent,
             ],
-            isError: result.issues.some(i => i.type === 'error'),
+            isError: result.issues.some((i) => i.type === 'error'),
           };
         }
 
@@ -5635,8 +5846,8 @@ ${writeResult.message}`;
           // Issues
           if (result.issues.length > 0) {
             output += `## Issues\n\n`;
-            const errors = result.issues.filter(i => i.type === 'error');
-            const warnings = result.issues.filter(i => i.type === 'warning');
+            const errors = result.issues.filter((i) => i.type === 'error');
+            const warnings = result.issues.filter((i) => i.type === 'warning');
 
             if (errors.length > 0) {
               output += `🔴 ERRORS:\n`;
@@ -5672,7 +5883,7 @@ ${writeResult.message}`;
                 text: output,
               } as TextContent,
             ],
-            isError: result.issues.some(i => i.type === 'error'),
+            isError: result.issues.some((i) => i.type === 'error'),
           };
         }
 
@@ -5722,13 +5933,12 @@ ${writeResult.message}`;
           const writeToFile = (argsObj.write_to_file as boolean) || false;
           const outputMode = (argsObj.output_mode as string) || 'diff';
 
-          const result = AntlrAnalyzer.addRuleToMode(
-            grammarContent,
-            ruleName,
-            pattern,
-            modeName,
-            { fragment, skip, channel, action }
-          );
+          const result = AntlrAnalyzer.addRuleToMode(grammarContent, ruleName, pattern, modeName, {
+            fragment,
+            skip,
+            channel,
+            action,
+          });
 
           let output = result.message + '\n\n';
 
@@ -5840,7 +6050,9 @@ ${writeResult.message}`;
           const writeToFile = (argsObj.write_to_file as boolean) || false;
           const outputMode = (argsObj.output_mode as string) || 'diff';
 
-          const result = AntlrAnalyzer.duplicateMode(grammarContent, sourceMode, newMode, { prefixRules });
+          const result = AntlrAnalyzer.duplicateMode(grammarContent, sourceMode, newMode, {
+            prefixRules,
+          });
 
           let output = result.message + '\n\n';
 
@@ -5876,7 +6088,7 @@ ${writeResult.message}`;
           const result = AntlrAnalyzer.createGrammarTemplate(grammarName, {
             type,
             modes,
-            includeBoilerplate
+            includeBoilerplate,
           });
 
           let output = result.message + '\n\n';
@@ -5994,16 +6206,20 @@ ${writeResult.message}`;
           if (result.summary.low > 0) {
             output += `🟢 ${result.summary.low} low`;
           }
-          if (result.summary.high === 0 && result.summary.medium === 0 && result.summary.low === 0) {
+          if (
+            result.summary.high === 0 &&
+            result.summary.medium === 0 &&
+            result.summary.low === 0
+          ) {
             output += `✅ No vulnerabilities detected`;
           }
           output += `\n\n`;
 
           if (result.vulnerabilities.length > 0) {
             // Group by severity
-            const high = result.vulnerabilities.filter(v => v.severity === 'high');
-            const medium = result.vulnerabilities.filter(v => v.severity === 'medium');
-            const low = result.vulnerabilities.filter(v => v.severity === 'low');
+            const high = result.vulnerabilities.filter((v) => v.severity === 'high');
+            const medium = result.vulnerabilities.filter((v) => v.severity === 'medium');
+            const low = result.vulnerabilities.filter((v) => v.severity === 'low');
 
             if (high.length > 0) {
               output += `## 🔴 High Severity\n\n`;
@@ -6064,16 +6280,20 @@ ${writeResult.message}`;
           if (result.summary.infos > 0) {
             output += `${result.summary.infos} info`;
           }
-          if (result.summary.errors === 0 && result.summary.warnings === 0 && result.summary.infos === 0) {
+          if (
+            result.summary.errors === 0 &&
+            result.summary.warnings === 0 &&
+            result.summary.infos === 0
+          ) {
             output += `✅ No issues`;
           }
           output += `\n\n`;
 
           if (result.issues.length > 0) {
             // Group by type
-            const errors = result.issues.filter(i => i.severity === 'error');
-            const warnings = result.issues.filter(i => i.severity === 'warning');
-            const infos = result.issues.filter(i => i.severity === 'info');
+            const errors = result.issues.filter((i) => i.severity === 'error');
+            const warnings = result.issues.filter((i) => i.severity === 'warning');
+            const infos = result.issues.filter((i) => i.severity === 'info');
 
             if (errors.length > 0) {
               output += `## ❌ Errors\n\n`;
@@ -6158,7 +6378,8 @@ ${writeResult.message}`;
             output += `## ${typeLabels[type] || type}\n\n`;
 
             for (const item of items) {
-              const severityIcon = item.severity === 'high' ? '🔴' : item.severity === 'medium' ? '🟡' : '🟢';
+              const severityIcon =
+                item.severity === 'high' ? '🔴' : item.severity === 'medium' ? '🟡' : '🟢';
               output += `### ${severityIcon} ${item.description}\n`;
 
               if (item.ruleName) {
@@ -6212,7 +6433,7 @@ ${writeResult.message}`;
 
           const result = AntlrAnalyzer.benchmarkParsing(grammarContent, inputText, {
             iterations,
-            warmupIterations
+            warmupIterations,
           });
 
           let output = '# Parsing Benchmark Results\n\n';
@@ -6234,7 +6455,7 @@ ${writeResult.message}`;
             excellent: '🚀',
             good: '✅',
             fair: '⚠️',
-            slow: '🐌'
+            slow: '🐌',
           };
 
           output += `**Performance Rating:** ${ratingEmoji[result.performanceRating]} ${result.performanceRating.toUpperCase()}\n\n`;
@@ -6292,21 +6513,27 @@ ${writeResult.message}`;
 
           if (!grammarFilesObj || Object.keys(grammarFilesObj).length === 0) {
             return {
-              content: [{ type: 'text', text: 'Error: grammar_files parameter is required' } as TextContent],
+              content: [
+                { type: 'text', text: 'Error: grammar_files parameter is required' } as TextContent,
+              ],
               isError: true,
             };
           }
 
           if (!startRule) {
             return {
-              content: [{ type: 'text', text: 'Error: start_rule parameter is required' } as TextContent],
+              content: [
+                { type: 'text', text: 'Error: start_rule parameter is required' } as TextContent,
+              ],
               isError: true,
             };
           }
 
           if (!inputText) {
             return {
-              content: [{ type: 'text', text: 'Error: input parameter is required' } as TextContent],
+              content: [
+                { type: 'text', text: 'Error: input parameter is required' } as TextContent,
+              ],
               isError: true,
             };
           }
@@ -6318,7 +6545,7 @@ ${writeResult.message}`;
           const runtime = getRuntime();
           const result = await runtime.benchmark(grammarFiles, startRule, inputText, {
             iterations,
-            warmupIterations
+            warmupIterations,
           });
 
           let output = '# Native ANTLR4 Benchmark Results\n\n';
@@ -6380,21 +6607,27 @@ ${writeResult.message}`;
 
           if (!grammarFilesObj || Object.keys(grammarFilesObj).length === 0) {
             return {
-              content: [{ type: 'text', text: 'Error: grammar_files parameter is required' } as TextContent],
+              content: [
+                { type: 'text', text: 'Error: grammar_files parameter is required' } as TextContent,
+              ],
               isError: true,
             };
           }
 
           if (!startRule) {
             return {
-              content: [{ type: 'text', text: 'Error: start_rule parameter is required' } as TextContent],
+              content: [
+                { type: 'text', text: 'Error: start_rule parameter is required' } as TextContent,
+              ],
               isError: true,
             };
           }
 
           if (!inputText) {
             return {
-              content: [{ type: 'text', text: 'Error: input parameter is required' } as TextContent],
+              content: [
+                { type: 'text', text: 'Error: input parameter is required' } as TextContent,
+              ],
               isError: true,
             };
           }
@@ -6504,21 +6737,27 @@ ${writeResult.message}`;
 
           if (!grammarFilesObj || Object.keys(grammarFilesObj).length === 0) {
             return {
-              content: [{ type: 'text', text: 'Error: grammar_files parameter is required' } as TextContent],
+              content: [
+                { type: 'text', text: 'Error: grammar_files parameter is required' } as TextContent,
+              ],
               isError: true,
             };
           }
 
           if (!startRule) {
             return {
-              content: [{ type: 'text', text: 'Error: start_rule parameter is required' } as TextContent],
+              content: [
+                { type: 'text', text: 'Error: start_rule parameter is required' } as TextContent,
+              ],
               isError: true,
             };
           }
 
           if (!inputText) {
             return {
-              content: [{ type: 'text', text: 'Error: input parameter is required' } as TextContent],
+              content: [
+                { type: 'text', text: 'Error: input parameter is required' } as TextContent,
+              ],
               isError: true,
             };
           }
@@ -6528,7 +6767,12 @@ ${writeResult.message}`;
 
           // Use native runtime for visualization
           const runtime = getRuntime();
-          const result = await runtime.visualizeParseTree(grammarFiles, startRule, inputText, format);
+          const result = await runtime.visualizeParseTree(
+            grammarFiles,
+            startRule,
+            inputText,
+            format
+          );
 
           let output = '# Parse Tree Visualization\n\n';
 
@@ -6559,12 +6803,17 @@ ${writeResult.message}`;
         }
 
         case 'generate-stress-test': {
-          const strategy = (argsObj.strategy as 'nested' | 'wide' | 'repetition' | 'mixed') || 'mixed';
+          const strategy =
+            (argsObj.strategy as 'nested' | 'wide' | 'repetition' | 'mixed') || 'mixed';
           const depth = (argsObj.depth as number) || 50;
           const count = (argsObj.count as number) || 100;
           const repetitions = (argsObj.repetitions as number) || 100;
 
-          const result = AntlrAnalyzer.generateStressTest(grammarContent, strategy, { depth, count, repetitions });
+          const result = AntlrAnalyzer.generateStressTest(grammarContent, strategy, {
+            depth,
+            count,
+            repetitions,
+          });
 
           let output = '# Generated Stress Test\n\n';
           output += `**Strategy:** ${strategy}\n`;
@@ -6610,7 +6859,12 @@ ${writeResult.message}`;
 
           if (!profile1 || !profile2) {
             return {
-              content: [{ type: 'text', text: 'Error: Both profile1 and profile2 are required' } as TextContent],
+              content: [
+                {
+                  type: 'text',
+                  text: 'Error: Both profile1 and profile2 are required',
+                } as TextContent,
+              ],
               isError: true,
             };
           }
