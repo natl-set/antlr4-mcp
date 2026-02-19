@@ -17,7 +17,7 @@ An MCP (Model Context Protocol) server that gives Claude AI the ability to read,
 
 ## What is this?
 
-This tool lets Claude AI help you with ANTLR4 grammars by providing 40+ specialized tools. Instead of manually editing grammar files and running the ANTLR compiler repeatedly, Claude can:
+This tool lets Claude AI help you with ANTLR4 grammars by providing 55+ specialized tools. Instead of manually editing grammar files and running the ANTLR compiler repeatedly, Claude can:
 
 - **Find bugs** in your grammar (like using `?` when you need `*`)
 - **Understand structure** across multiple imported grammar files
@@ -44,7 +44,7 @@ This tool lets Claude AI help you with ANTLR4 grammars by providing 40+ speciali
 
 ## Features
 
-- **40+ specialized grammar tools** for analysis, validation, and modification
+- **55+ specialized grammar tools** for analysis, validation, and modification
 - **Smart validation** - Aggregates 17,000+ warnings into 10 actionable items
 - **Multi-file grammar support** - Load and analyze imported grammars
 - **Pattern detection** - Finds suspicious quantifiers and anti-patterns
@@ -215,6 +215,10 @@ await use_mcp_tool("antlr4", "preview-tokens", {
 - **benchmark-parsing** - Simulated benchmark (quick estimate)
 - **native-benchmark** - Real ANTLR4 Java runtime benchmark (accurate)
 - **profile-parsing** - Detailed parse metrics (ambiguities, tree depth, rule frequency)
+- **visualize-parse-tree** - ASCII/JSON/LISP tree visualization
+- **generate-stress-test** - Generate stress test inputs for performance testing
+- **compare-profiles** - Compare two parsing profiles to measure optimization impact
+- **compare-grammars** - Compare two grammars to identify differences
 
 ### Phase 1 Analysis
 
@@ -234,7 +238,7 @@ await use_mcp_tool("antlr4", "preview-tokens", {
 - **batch-create-tokens** - Generate multiple tokens
 - **suggest-tokens-from-errors** - Parse error logs
 
-[See all 40+ tools →](docs/FEATURES.md)
+[See all 55+ tools →](docs/FEATURES.md)
 
 ## Real-World Impact
 
@@ -274,7 +278,7 @@ Tested on **Palo Alto firewall configuration grammar** (36 files, 1500+ lines):
 
 ## Documentation
 
-- [Features Overview](docs/FEATURES.md) - All 40+ tools explained
+- [Features Overview](docs/FEATURES.md) - All 55+ tools explained
 - [Smart Validation Guide](docs/SMART_VALIDATION.md) - Complete guide with examples
 - [Tool Specifications](docs/specs/) - Detailed specs for key features
 
