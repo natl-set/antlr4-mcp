@@ -436,22 +436,22 @@ Returns:
       properties: {
         grammar1_content: {
           type: 'string',
-          description: 'Content of the first grammar file',
+          description: 'Content of the first grammar file (required if from_file1 not provided)',
         },
         grammar2_content: {
           type: 'string',
-          description: 'Content of the second grammar file',
+          description: 'Content of the second grammar file (required if from_file2 not provided)',
         },
         from_file1: {
           type: 'string',
-          description: 'Optional: path to first grammar file (overrides grammar1_content)',
+          description: 'Path to first grammar file (overrides grammar1_content)',
         },
         from_file2: {
           type: 'string',
-          description: 'Optional: path to second grammar file (overrides grammar2_content)',
+          description: 'Path to second grammar file (overrides grammar2_content)',
         },
       },
-      required: ['grammar1_content', 'grammar2_content'],
+      required: [],
     },
   },
   {
@@ -2631,6 +2631,189 @@ Common use cases:
     },
   },
   {
+    name: 'visualize-parse-tree',
+    description: `Visualize the parse tree structure for a given input.
+
+**When to use:** Understanding parse results, debugging grammar structure, documentation.
+
+**Output formats:**
+- **ascii**: Text-based tree with indentation (default)
+- **json**: Structured JSON tree representation
+- **lisp**: S-expression style (rule child1 child2 ...)
+
+**Parameters:**
+- grammar_files: Object mapping filename to content
+- start_rule: Parser rule to start from
+- input: Sample input text
+- format: Output format (ascii, json, lisp)
+
+**Example:**
+  grammar_files: {"Expr.g4": "grammar Expr; ..."}
+  start_rule: "expr"
+  input: "1 + 2 * 3"
+  format: "ascii"
+
+**Returns:**
+ASCII example:
+\`\`\`
+expr
+├── term
+│   └── factor
+│       └── NUMBER '1'
+├── PLUS '+'
+└── term
+    ├── factor
+    │   └── NUMBER '2'
+    ├── TIMES '*'
+    └── factor
+        └── NUMBER '3'
+\`\`\``,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        grammar_files: {
+          type: 'object',
+          description: 'Map of filename to grammar content',
+          additionalProperties: { type: 'string' },
+        },
+        start_rule: {
+          type: 'string',
+          description: 'Parser rule to start parsing from',
+        },
+        input: {
+          type: 'string',
+          description: 'Input text to parse',
+        },
+        format: {
+          type: 'string',
+          enum: ['ascii', 'json', 'lisp'],
+          description: 'Output format (default: ascii)',
+        },
+      },
+      required: ['grammar_files', 'start_rule', 'input'],
+    },
+  },
+  {
+    name: 'generate-stress-test',
+    description: `Generate stress test inputs for grammar performance testing.
+
+**When to use:** Testing grammar robustness, identifying performance issues, benchmarking.
+
+**Generation strategies:**
+- **nested**: Deep nesting of recursive rules (tests stack depth)
+- **wide**: Many alternatives in choice rules (tests branching)
+- **repetition**: Repeated sequences (tests loops)
+- **mixed**: Combination of all strategies (default)
+
+**Parameters:**
+- grammar_content: The grammar to generate tests for
+- strategy: Generation strategy (nested, wide, repetition, mixed)
+- depth: Nesting depth for nested strategy (default: 50)
+- count: Number of alternatives for wide strategy (default: 100)
+- repetitions: Repetition count for repetition strategy (default: 100)
+
+**Returns:**
+- Generated test input
+- Expected characteristics (depth, width, size)
+- Warnings if grammar structure can't support requested strategy
+
+**Example:**
+  grammar_content: "grammar Expr; ..."
+  strategy: "nested"
+  depth: 30
+
+  Output: "(((...(1 + 2)...)))"  (30 levels deep)`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        grammar_content: {
+          type: 'string',
+          description: 'The ANTLR4 grammar file content',
+        },
+        from_file: {
+          type: 'string',
+          description: 'Optional: path to a grammar file to read',
+        },
+        strategy: {
+          type: 'string',
+          enum: ['nested', 'wide', 'repetition', 'mixed'],
+          description: 'Generation strategy (default: mixed)',
+        },
+        depth: {
+          type: 'number',
+          description: 'Nesting depth for nested strategy (default: 50)',
+        },
+        count: {
+          type: 'number',
+          description: 'Number of alternatives for wide strategy (default: 100)',
+        },
+        repetitions: {
+          type: 'number',
+          description: 'Repetition count for repetition strategy (default: 100)',
+        },
+      },
+      required: ['grammar_content'],
+    },
+  },
+  {
+    name: 'compare-profiles',
+    description: `Compare two parsing profiles to measure optimization impact.
+
+**When to use:** Validating grammar optimizations, A/B testing changes, regression testing.
+
+**Parameters:**
+- profile1: First profile result (from profile-parsing)
+- profile2: Second profile result (from profile-parsing)
+
+**Returns:**
+- Comparison metrics with % change
+- Performance verdict (improved, degraded, unchanged)
+- Key differences highlighted
+- Recommendations based on changes
+
+**Example:**
+  profile1: { parseTimeMs: 150, ambiguityCount: 5, ... }
+  profile2: { parseTimeMs: 80, ambiguityCount: 0, ... }
+
+  Output:
+  | Metric | Before | After | Change |
+  |--------|--------|-------|--------|
+  | Parse Time | 150ms | 80ms | -46.7% ✅ |
+  | Ambiguities | 5 | 0 | -100% ✅ |
+
+  Verdict: ✅ Improved - Parse time reduced by 46.7%`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        profile1: {
+          type: 'object',
+          description: 'First profile result (baseline)',
+          properties: {
+            parseTimeMs: { type: 'number' },
+            tokenCount: { type: 'number' },
+            treeDepth: { type: 'number' },
+            decisionCount: { type: 'number' },
+            ambiguityCount: { type: 'number' },
+            contextSensitivityCount: { type: 'number' },
+          },
+        },
+        profile2: {
+          type: 'object',
+          description: 'Second profile result (optimized)',
+          properties: {
+            parseTimeMs: { type: 'number' },
+            tokenCount: { type: 'number' },
+            treeDepth: { type: 'number' },
+            decisionCount: { type: 'number' },
+            ambiguityCount: { type: 'number' },
+            contextSensitivityCount: { type: 'number' },
+          },
+        },
+      },
+      required: ['profile1', 'profile2'],
+    },
+  },
+  {
     name: 'move-rule',
     description: `Move an existing rule to a new position relative to another rule.
 
@@ -2919,6 +3102,42 @@ Returns: List of changes with line numbers and reasoning`,
     },
   },
 ];
+
+/**
+ * Keep tool schemas consistent with runtime file-loading fallbacks.
+ * If a tool supports from_file/from_fileN, grammar content should not be hard-required.
+ */
+function normalizeToolInputSchemas(toolsList: Tool[]): void {
+  for (const tool of toolsList) {
+    const inputSchema = tool.inputSchema as
+      | { properties?: Record<string, unknown>; required?: string[] }
+      | undefined;
+
+    if (!inputSchema || !Array.isArray(inputSchema.required)) {
+      continue;
+    }
+
+    const properties = inputSchema.properties || {};
+    const hasFromFile = Object.prototype.hasOwnProperty.call(properties, 'from_file');
+    const hasFromFile1 = Object.prototype.hasOwnProperty.call(properties, 'from_file1');
+    const hasFromFile2 = Object.prototype.hasOwnProperty.call(properties, 'from_file2');
+
+    inputSchema.required = inputSchema.required.filter((field) => {
+      if (field === 'grammar_content' && hasFromFile) {
+        return false;
+      }
+      if (field === 'grammar1_content' && hasFromFile1) {
+        return false;
+      }
+      if (field === 'grammar2_content' && hasFromFile2) {
+        return false;
+      }
+      return true;
+    });
+  }
+}
+
+normalizeToolInputSchemas(tools);
 
 /**
  * Helper: Reconstruct grammar from merged analysis
@@ -3845,22 +4064,41 @@ Note: The update-rule, add-lexer-rule, and add-parser-rule tools automatically p
         }
 
         case 'compare-grammars': {
-          const analysis1 = AntlrAnalyzer.analyze(grammarContent);
-          const analysis2 = AntlrAnalyzer.analyze(grammar2Content);
+          // Input validation
+          if (!grammarContent || grammarContent.trim() === '') {
+            return {
+              content: [{ type: 'text', text: 'Error: grammar1_content or from_file1 is required' } as TextContent],
+              isError: true,
+            };
+          }
+          if (!grammar2Content || grammar2Content.trim() === '') {
+            return {
+              content: [{ type: 'text', text: 'Error: grammar2_content or from_file2 is required' } as TextContent],
+              isError: true,
+            };
+          }
 
-          const rules1Set = new Set(analysis1.rules.map((r) => r.name));
-          const rules2Set = new Set(analysis2.rules.map((r) => r.name));
+          const result = AntlrAnalyzer.compareGrammars(grammarContent, grammar2Content);
 
-          const onlyIn1 = Array.from(rules1Set).filter((r) => !rules2Set.has(r));
-          const onlyIn2 = Array.from(rules2Set).filter((r) => !rules1Set.has(r));
-          const common = Array.from(rules1Set).filter((r) => rules2Set.has(r));
+          let text = `# Grammar Comparison\n\n`;
+          text += `${result.summary}\n\n`;
 
-          let text = `Grammar 1: ${analysis1.grammarName || 'Unknown'} (${analysis1.rules.length} rules)\n`;
-          text += `Grammar 2: ${analysis2.grammarName || 'Unknown'} (${analysis2.rules.length} rules)\n\n`;
+          text += `## Statistics\n`;
+          text += `- Grammar 1: ${result.grammar1.parserRules} parser, ${result.grammar1.lexerRules} lexer (${result.grammar1.totalRules} total)\n`;
+          text += `- Grammar 2: ${result.grammar2.parserRules} parser, ${result.grammar2.lexerRules} lexer (${result.grammar2.totalRules} total)\n\n`;
 
-          text += `Common rules: ${common.length}\n${common.join(', ')}\n\n`;
-          text += `Only in Grammar 1: ${onlyIn1.length}\n${onlyIn1.join(', ')}\n\n`;
-          text += `Only in Grammar 2: ${onlyIn2.length}\n${onlyIn2.join(', ')}\n`;
+          if (result.differences.added.length > 0) {
+            text += `## Added Rules (${result.differences.added.length})\n`;
+            text += result.differences.added.join(', ') + '\n\n';
+          }
+          if (result.differences.removed.length > 0) {
+            text += `## Removed Rules (${result.differences.removed.length})\n`;
+            text += result.differences.removed.join(', ') + '\n\n';
+          }
+          if (result.differences.modified.length > 0) {
+            text += `## Modified Rules (${result.differences.modified.length})\n`;
+            text += result.differences.modified.join(', ') + '\n\n';
+          }
 
           return {
             content: [
@@ -6251,6 +6489,149 @@ ${writeResult.message}`;
             rating = '🐌 Slow';
           }
           output += `\n**Rating:** ${rating}\n`;
+
+          return {
+            content: [{ type: 'text', text: output } as TextContent],
+            isError: false,
+          };
+        }
+
+        case 'visualize-parse-tree': {
+          const grammarFilesObj = argsObj.grammar_files as Record<string, string>;
+          const startRule = (argsObj.start_rule as string) || '';
+          const inputText = (argsObj.input as string) || '';
+          const format = (argsObj.format as 'ascii' | 'json' | 'lisp') || 'ascii';
+
+          if (!grammarFilesObj || Object.keys(grammarFilesObj).length === 0) {
+            return {
+              content: [{ type: 'text', text: 'Error: grammar_files parameter is required' } as TextContent],
+              isError: true,
+            };
+          }
+
+          if (!startRule) {
+            return {
+              content: [{ type: 'text', text: 'Error: start_rule parameter is required' } as TextContent],
+              isError: true,
+            };
+          }
+
+          if (!inputText) {
+            return {
+              content: [{ type: 'text', text: 'Error: input parameter is required' } as TextContent],
+              isError: true,
+            };
+          }
+
+          // Convert to Map
+          const grammarFiles = new Map(Object.entries(grammarFilesObj));
+
+          // Use native runtime for visualization
+          const runtime = getRuntime();
+          const result = await runtime.visualizeParseTree(grammarFiles, startRule, inputText, format);
+
+          let output = '# Parse Tree Visualization\n\n';
+
+          if (!result.success) {
+            output += `❌ **Visualization Failed**\n\n`;
+            if (result.errors) {
+              output += `**Errors:**\n`;
+              for (const err of result.errors) {
+                output += `- ${err}\n`;
+              }
+            }
+            return {
+              content: [{ type: 'text', text: output } as TextContent],
+              isError: true,
+            };
+          }
+
+          output += `**Format:** ${format}\n`;
+          output += `**Input:** \`${inputText.substring(0, 50)}${inputText.length > 50 ? '...' : ''}\`\n\n`;
+          output += '```\n';
+          output += result.tree || '(empty tree)';
+          output += '\n```\n';
+
+          return {
+            content: [{ type: 'text', text: output } as TextContent],
+            isError: false,
+          };
+        }
+
+        case 'generate-stress-test': {
+          const strategy = (argsObj.strategy as 'nested' | 'wide' | 'repetition' | 'mixed') || 'mixed';
+          const depth = (argsObj.depth as number) || 50;
+          const count = (argsObj.count as number) || 100;
+          const repetitions = (argsObj.repetitions as number) || 100;
+
+          const result = AntlrAnalyzer.generateStressTest(grammarContent, strategy, { depth, count, repetitions });
+
+          let output = '# Generated Stress Test\n\n';
+          output += `**Strategy:** ${strategy}\n`;
+          output += `**Characteristics:**\n`;
+          if (result.depth) output += `- Nesting depth: ${result.depth}\n`;
+          if (result.width) output += `- Alternatives: ${result.width}\n`;
+          if (result.size) output += `- Input size: ${result.size} bytes\n`;
+          output += `\n`;
+
+          if (result.warnings && result.warnings.length > 0) {
+            output += `**Warnings:**\n`;
+            for (const w of result.warnings) {
+              output += `- ⚠️ ${w}\n`;
+            }
+            output += `\n`;
+          }
+
+          output += `**Generated Input:**\n\`\`\`\n${result.input}\n\`\`\`\n`;
+
+          return {
+            content: [{ type: 'text', text: output } as TextContent],
+            isError: false,
+          };
+        }
+
+        case 'compare-profiles': {
+          const profile1 = argsObj.profile1 as {
+            parseTimeMs?: number;
+            tokenCount?: number;
+            treeDepth?: number;
+            decisionCount?: number;
+            ambiguityCount?: number;
+            contextSensitivityCount?: number;
+          };
+          const profile2 = argsObj.profile2 as {
+            parseTimeMs?: number;
+            tokenCount?: number;
+            treeDepth?: number;
+            decisionCount?: number;
+            ambiguityCount?: number;
+            contextSensitivityCount?: number;
+          };
+
+          if (!profile1 || !profile2) {
+            return {
+              content: [{ type: 'text', text: 'Error: Both profile1 and profile2 are required' } as TextContent],
+              isError: true,
+            };
+          }
+
+          const result = AntlrAnalyzer.compareProfiles(profile1, profile2);
+
+          let output = '# Profile Comparison\n\n';
+          output += `## Metrics\n\n`;
+          output += `| Metric | Before | After | Change |\n`;
+          output += `|--------|--------|-------|--------|\n`;
+
+          for (const metric of result.metrics) {
+            const changeIcon = metric.improved ? '✅' : metric.degraded ? '❌' : '➖';
+            output += `| ${metric.name} | ${metric.before} | ${metric.after} | ${metric.changePercent > 0 ? '+' : ''}${metric.changePercent}% ${changeIcon} |\n`;
+          }
+
+          output += `\n**Verdict:** ${result.verdict}\n`;
+
+          if (result.summary) {
+            output += `\n**Summary:** ${result.summary}\n`;
+          }
 
           return {
             content: [{ type: 'text', text: output } as TextContent],

@@ -67,10 +67,10 @@ export class Antlr4Runtime {
   private antlr4Command: string | null = null;
 
   constructor(config: RuntimeConfig = {}) {
+    const javaPathFromJavaHome = process.env.JAVA_HOME ? `${process.env.JAVA_HOME}/bin/java` : '';
     this.config = {
       antlr4Path: config.antlr4Path || process.env.ANTLR4_JAR || '',
-      javaPath:
-        config.javaPath || process.env.JAVA_HOME ? `${process.env.JAVA_HOME}/bin/java` : 'java',
+      javaPath: config.javaPath || javaPathFromJavaHome || 'java',
       timeout: config.timeout || 30000,
     };
   }
@@ -985,6 +985,395 @@ public class Profiler extends DiagnosticErrorListener {
         // Ignore cleanup errors
       }
     }
+  }
+
+  /**
+   * Visualize parse tree as ASCII or JSON
+   */
+  async visualizeParseTree(
+    grammarFiles: Map<string, string>,
+    startRule: string,
+    input: string,
+    format: 'ascii' | 'json' | 'lisp' = 'ascii'
+  ): Promise<{
+    success: boolean;
+    tree?: string;
+    stats: {
+      nodeCount: number;
+      depth: number;
+      ruleNodes: number;
+      terminalNodes: number;
+    };
+    errors?: string[];
+  }> {
+    const available = await this.isAvailable();
+    if (!available) {
+      return {
+        success: false,
+        stats: { nodeCount: 0, depth: 0, ruleNodes: 0, terminalNodes: 0 },
+        errors: ['ANTLR4 runtime not available'],
+      };
+    }
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'antlr4-tree-'));
+
+    try {
+      // Write grammar files
+      let mainGrammarName = '';
+      let lexerName = '';
+      for (const [filename, content] of grammarFiles) {
+        fs.writeFileSync(path.join(tmpDir, filename), content, 'utf-8');
+        const parserMatch = content.match(/parser\s+grammar\s+(\w+)/);
+        const combinedMatch = content.match(/^grammar\s+(\w+)/m);
+        const lexerMatch = content.match(/lexer\s+grammar\s+(\w+)/);
+        if (parserMatch) mainGrammarName = parserMatch[1];
+        else if (combinedMatch && !mainGrammarName) mainGrammarName = combinedMatch[1];
+        if (lexerMatch) lexerName = lexerMatch[1];
+      }
+      if (!lexerName) lexerName = mainGrammarName;
+      if (!mainGrammarName) throw new Error('Could not detect grammar name');
+
+      // Write input
+      fs.writeFileSync(path.join(tmpDir, 'input.txt'), input, 'utf-8');
+
+      // Write tree visualizer
+      const visualizerJava = `
+import org.antlr.v4.runtime.*;
+import org.antlr.v4.runtime.tree.*;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+
+public class Visualizer {
+    static int nodeCount = 0, ruleNodes = 0, terminalNodes = 0, maxDepth = 0;
+
+    public static void main(String[] args) throws Exception {
+        String input = new String(Files.readAllBytes(Paths.get("${tmpDir}/input.txt")));
+        CharStream chars = CharStreams.fromString(input);
+        Lexer lexer = (Lexer) Class.forName("${lexerName}Lexer").getConstructor(CharStream.class).newInstance(chars);
+        CommonTokenStream tokens = new CommonTokenStream(lexer);
+        Parser parser = (Parser) Class.forName("${mainGrammarName}Parser").getConstructor(TokenStream.class).newInstance(tokens);
+        ParseTree tree = (ParseTree) parser.getClass().getMethod("${startRule}").invoke(parser);
+
+        String output = "${format}".equals("json") ? toJson(tree, 0) :
+                        "${format}".equals("lisp") ? toLisp(tree) : toAscii(tree, "", true);
+
+        int depth = computeDepth(tree, 0);
+        System.out.println("{\\"tree\\":\\"" + escape(output) + "\\",");
+        System.out.println(\\"nodeCount:\\" + nodeCount + \\",\\");
+        System.out.println(\\"ruleNodes:\\" + ruleNodes + \\",\\");
+        System.out.println(\\"terminalNodes:\\" + terminalNodes + \\",\\");
+        System.out.println(\\"depth:\\" + depth + \\"}\\");
+    }
+
+    static String toAscii(ParseTree tree, String prefix, boolean tail) {
+        nodeCount++;
+        String result = prefix + (tail ? "└── " : "├── ") + tree.getText().replace("\\n", "\\\\n").substring(0, Math.min(40, tree.getText().length()));
+        if (tree instanceof ParserRuleContext) { ruleNodes++; result += " [" + ((ParserRuleContext) tree).getClass().getSimpleName().replace("Context", "") + "]"; }
+        else terminalNodes++;
+        result += "\\n";
+        for (int i = 0; i < tree.getChildCount(); i++) {
+            boolean isLast = (i == tree.getChildCount() - 1);
+            String childPrefix = prefix + (tail ? "    " : "│   ");
+            result += toAscii(tree.getChild(i), childPrefix, isLast);
+        }
+        return result;
+    }
+
+    static String toJson(ParseTree tree, int depth) {
+        nodeCount++;
+        if (tree instanceof ParserRuleContext) ruleNodes++; else terminalNodes++;
+        StringBuilder sb = new StringBuilder("{\\"text\\":\\"" + escape(tree.getText().substring(0, Math.min(50, tree.getText().length()))) + "\\"");
+        if (tree instanceof ParserRuleContext) sb.append(",\\"rule\\":\\"" + ((ParserRuleContext) tree).getClass().getSimpleName().replace("Context", "") + "\\"");
+        if (tree.getChildCount() > 0) {
+            sb.append(",\\"children\\":[");
+            for (int i = 0; i < tree.getChildCount(); i++) {
+                if (i > 0) sb.append(",");
+                sb.append(toJson(tree.getChild(i), depth + 1));
+            }
+            sb.append("]");
+        }
+        sb.append("}");
+        return sb.toString();
+    }
+
+    static String toLisp(ParseTree tree) {
+        nodeCount++;
+        if (tree instanceof ParserRuleContext) ruleNodes++; else terminalNodes++;
+        if (tree.getChildCount() == 0) return tree.getText();
+        StringBuilder sb = new StringBuilder("(" + ((ParserRuleContext) tree).getClass().getSimpleName().replace("Context", ""));
+        for (int i = 0; i < tree.getChildCount(); i++) sb.append(" ").append(toLisp(tree.getChild(i)));
+        return sb.append(")").toString();
+    }
+
+    static int computeDepth(ParseTree tree, int depth) {
+        if (tree == null) return depth;
+        int max = depth;
+        for (int i = 0; i < tree.getChildCount(); i++) max = Math.max(max, computeDepth(tree.getChild(i), depth + 1));
+        return max;
+    }
+
+    static String escape(String s) {
+        return s.replace("\\\\", "\\\\\\\\").replace("\\"", "\\\\\\"").replace("\\n", "\\\\n").replace("\\r", "\\\\r").replace("\\t", "\\\\t");
+    }
+}
+`;
+      fs.writeFileSync(path.join(tmpDir, 'Visualizer.java'), visualizerJava, 'utf-8');
+
+      // Compile
+      const g4Files = Array.from(grammarFiles.keys()).filter(f => f.endsWith('.g4')).map(f => path.basename(f)).join(' ');
+      await execAsync(`cd ${tmpDir} && ${this.antlr4Command} ${g4Files}`, { timeout: this.config.timeout });
+      await execAsync(`cd ${tmpDir} && javac -cp ".:${this.getClasspath()}" *.java`, { timeout: this.config.timeout });
+
+      // Run
+      const { stdout, stderr } = await execAsync(`cd ${tmpDir} && java -cp ".:${this.getClasspath()}" Visualizer`, { timeout: this.config.timeout });
+      const result = JSON.parse(stdout.trim());
+
+      return {
+        success: true,
+        tree: result.tree,
+        stats: {
+          nodeCount: result.nodeCount,
+          depth: result.depth,
+          ruleNodes: result.ruleNodes,
+          terminalNodes: result.terminalNodes,
+        },
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        stats: { nodeCount: 0, depth: 0, ruleNodes: 0, terminalNodes: 0 },
+        errors: [this.formatError(error)],
+      };
+    } finally {
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    }
+  }
+
+  /**
+   * Generate stress test inputs based on grammar structure
+   */
+  generateStressTest(
+    grammarContent: string,
+    options: {
+      maxSize?: number;
+      targetRule?: string;
+      includeComments?: boolean;
+    } = {}
+  ): {
+    inputs: Array<{
+      input: string;
+      description: string;
+      expectedSize: number;
+    }>;
+    ruleCoverage: string[];
+  } {
+    const analysis = this.analyze(grammarContent);
+    const maxSize = options.maxSize || 1000;
+    const targetRule = options.targetRule;
+
+    const inputs: Array<{ input: string; description: string; expectedSize: number }> = [];
+    const coveredRules = new Set<string>();
+
+    // Find lexer rules that produce literal tokens
+    const literalTokens: Array<{ name: string; value: string }> = [];
+    for (const rule of analysis.rules) {
+      if (rule.type === 'lexer') {
+        const match = rule.definition.match(/'([^']+)'/);
+        if (match) {
+          literalTokens.push({ name: rule.name, value: match[1] });
+        }
+      }
+    }
+
+    // Generate various test inputs
+    // 1. Single token repetition
+    if (literalTokens.length > 0) {
+      const token = literalTokens[0];
+      const repetitions = Math.floor(maxSize / token.value.length);
+      inputs.push({
+        input: token.value.repeat(Math.min(repetitions, 100)),
+        description: `Repetition of '${token.value}' (${Math.min(repetitions, 100)} times)`,
+        expectedSize: Math.min(repetitions, 100) * token.value.length,
+      });
+      coveredRules.add(token.name);
+    }
+
+    // 2. Token sequence
+    if (literalTokens.length >= 3) {
+      const sequence = literalTokens.slice(0, 5).map(t => t.value).join(' ');
+      const repetitions = Math.floor(maxSize / sequence.length);
+      inputs.push({
+        input: sequence.repeat(Math.min(repetitions, 20)),
+        description: 'Alternating token sequence',
+        expectedSize: sequence.length * Math.min(repetitions, 20),
+      });
+      literalTokens.slice(0, 5).forEach(t => coveredRules.add(t.name));
+    }
+
+    // 3. Nested structures (if we detect recursive rules)
+    for (const rule of analysis.rules) {
+      if (rule.type === 'parser' && rule.referencedRules.includes(rule.name)) {
+        // Found recursive rule - generate nested input
+        const matchingTokens = literalTokens.filter(t =>
+          rule.definition.includes(t.name) || rule.definition.includes(`'${t.value}'`)
+        );
+        if (matchingTokens.length > 0) {
+          const token = matchingTokens[0].value;
+          let nested = token;
+          for (let i = 0; i < Math.min(20, Math.floor(maxSize / (token.length * 2))); i++) {
+            nested = `${token} ${nested} ${token}`;
+          }
+          inputs.push({
+            input: nested.substring(0, maxSize),
+            description: `Nested structure for ${rule.name} (${Math.min(20, Math.floor(maxSize / (token.length * 2)))} levels)`,
+            expectedSize: nested.length,
+          });
+          coveredRules.add(rule.name);
+        }
+      }
+    }
+
+    // 4. All unique tokens
+    if (literalTokens.length > 0) {
+      const allTokens = literalTokens.map(t => t.value).join(' ');
+      inputs.push({
+        input: allTokens,
+        description: `All ${literalTokens.length} unique tokens`,
+        expectedSize: allTokens.length,
+      });
+      literalTokens.forEach(t => coveredRules.add(t.name));
+    }
+
+    return {
+      inputs,
+      ruleCoverage: Array.from(coveredRules),
+    };
+  }
+
+  private analyze(grammarContent: string): any {
+    // Simple inline analysis - avoid circular dependency
+    const rules: Array<{ name: string; type: string; definition: string; referencedRules: string[] }> = [];
+    const lines = grammarContent.split('\n');
+    let inBlock = false;
+    let currentRule = '';
+    let ruleStartLine = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmed = line.trim();
+
+      if (trimmed.startsWith('/*') || trimmed.startsWith('//')) continue;
+      if (trimmed.startsWith('/*')) inBlock = true;
+      if (inBlock && trimmed.includes('*/')) { inBlock = false; continue; }
+      if (inBlock) continue;
+
+      const ruleMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*:/);
+      if (ruleMatch && !trimmed.includes('fragment')) {
+        if (currentRule && ruleStartLine > 0) {
+          const isLexer = /^[A-Z_]/.test(currentRule);
+          rules.push({
+            name: currentRule,
+            type: isLexer ? 'lexer' : 'parser',
+            definition: lines.slice(ruleStartLine - 1, i).join('\n'),
+            referencedRules: [],
+          });
+        }
+        currentRule = ruleMatch[1];
+        ruleStartLine = i + 1;
+      }
+    }
+
+    if (currentRule) {
+      const isLexer = /^[A-Z_]/.test(currentRule);
+      rules.push({
+        name: currentRule,
+        type: isLexer ? 'lexer' : 'parser',
+        definition: lines.slice(ruleStartLine - 1).join('\n'),
+        referencedRules: [],
+      });
+    }
+
+    return { rules };
+  }
+
+  /**
+   * Compare two profile results
+   */
+  static compareProfiles(
+    profile1: {
+      profile: { parseTimeMs: number; tokenCount: number; treeDepth: number; ambiguityCount: number; contextSensitivityCount: number };
+      rules: { byFrequency: Array<{ rule: string; count: number }> };
+    },
+    profile2: {
+      profile: { parseTimeMs: number; tokenCount: number; treeDepth: number; ambiguityCount: number; contextSensitivityCount: number };
+      rules: { byFrequency: Array<{ rule: string; count: number }> };
+    },
+    labels: { profile1: string; profile2: string } = { profile1: 'Before', profile2: 'After' }
+  ): {
+    improvements: string[];
+    regressions: string[];
+    metrics: {
+      parseTimeChange: number;
+      tokenCountMatch: boolean;
+      ambiguityChange: number;
+      contextSensitivityChange: number;
+    };
+    summary: string;
+  } {
+    const improvements: string[] = [];
+    const regressions: string[] = [];
+
+    const parseTimeChange = ((profile2.profile.parseTimeMs - profile1.profile.parseTimeMs) / profile1.profile.parseTimeMs) * 100;
+    const ambiguityChange = profile2.profile.ambiguityCount - profile1.profile.ambiguityCount;
+    const contextSensitivityChange = profile2.profile.contextSensitivityCount - profile1.profile.contextSensitivityCount;
+    const tokenCountMatch = profile1.profile.tokenCount === profile2.profile.tokenCount;
+
+    // Analyze changes
+    if (parseTimeChange < -10) {
+      improvements.push(`Parse time improved by ${Math.abs(parseTimeChange).toFixed(1)}%`);
+    } else if (parseTimeChange > 10) {
+      regressions.push(`Parse time worsened by ${parseTimeChange.toFixed(1)}%`);
+    }
+
+    if (ambiguityChange < 0) {
+      improvements.push(`Ambiguities reduced by ${Math.abs(ambiguityChange)}`);
+    } else if (ambiguityChange > 0) {
+      regressions.push(`Ambiguities increased by ${ambiguityChange}`);
+    }
+
+    if (contextSensitivityChange < 0) {
+      improvements.push(`Context sensitivity reduced by ${Math.abs(contextSensitivityChange)}`);
+    } else if (contextSensitivityChange > 0) {
+      regressions.push(`Context sensitivity increased by ${contextSensitivityChange}`);
+    }
+
+    if (!tokenCountMatch) {
+      regressions.push(`Token count mismatch: ${profile1.profile.tokenCount} vs ${profile2.profile.tokenCount}`);
+    }
+
+    // Generate summary
+    let summary = '';
+    if (improvements.length > 0 && regressions.length === 0) {
+      summary = `✅ ${labels.profile2} is better than ${labels.profile1}`;
+    } else if (regressions.length > 0 && improvements.length === 0) {
+      summary = `❌ ${labels.profile2} is worse than ${labels.profile1}`;
+    } else if (improvements.length === 0 && regressions.length === 0) {
+      summary = `➖ No significant difference between ${labels.profile1} and ${labels.profile2}`;
+    } else {
+      summary = `⚖️ Mixed results: ${improvements.length} improvements, ${regressions.length} regressions`;
+    }
+
+    return {
+      improvements,
+      regressions,
+      metrics: {
+        parseTimeChange,
+        tokenCountMatch,
+        ambiguityChange,
+        contextSensitivityChange,
+      },
+      summary,
+    };
   }
 
   /**

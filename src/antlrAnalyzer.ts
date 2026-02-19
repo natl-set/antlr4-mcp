@@ -90,18 +90,13 @@ export class AntlrAnalyzer {
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      currentLineNum++;
-      const trimmed = line.trim();
+      currentLineNum = i + 1;
+      const processedLine = this.stripCommentsFromLine(line, inBlockComment);
+      inBlockComment = processedLine.inBlockComment;
+      const trimmed = processedLine.line.trim();
 
       // Skip empty lines (unless we are inside a rule definition extraction, handled below)
       if (trimmed === '') {
-        continue;
-      }
-
-      // Handle block comments
-      if (trimmed.includes('/*')) inBlockComment = true;
-      if (trimmed.includes('*/')) inBlockComment = false;
-      if (inBlockComment || trimmed.startsWith('//')) {
         continue;
       }
 
@@ -165,6 +160,7 @@ export class AntlrAnalyzer {
       // Check for rule definition start
       let ruleName: string | null = null;
       let isRuleStart = false;
+      let ruleStartLine = currentLineNum;
 
       // Case 1: "ruleName :" or "fragment ruleName :" (Same line)
       // Matches: lowercase_name, UPPERCASE_NAME, or MixedCaseName
@@ -186,7 +182,7 @@ export class AntlrAnalyzer {
           ruleName = pendingRuleName;
         }
         // Use the line number where the name was found
-        currentLineNum = pendingRuleLine;
+        ruleStartLine = pendingRuleLine;
         isRuleStart = true;
         pendingRuleName = null;
       }
@@ -199,7 +195,7 @@ export class AntlrAnalyzer {
             // Colon is on same line, so this is the rule start
             ruleName = ruleNameMatch[1];
             isRuleStart = true;
-            currentLineNum = pendingRuleLine;
+            ruleStartLine = pendingRuleLine;
             pendingRuleName = null;
           } else {
             // Just the name, wait for colon on next line
@@ -267,7 +263,7 @@ export class AntlrAnalyzer {
             type: 'error',
             message: `Rule '${ruleName}' appears to be missing a semicolon or is extremely long (>${maxLinesPerRule} lines)`,
             ruleName: ruleName,
-            lineNumber: pendingRuleLine > 0 ? pendingRuleLine : i + 1,
+            lineNumber: ruleStartLine,
           });
           // Try to continue parsing - add semicolon to avoid breaking everything
           ruleContent += ';';
@@ -284,7 +280,7 @@ export class AntlrAnalyzer {
           name: ruleName,
           type: ruleType,
           definition: ruleContent,
-          lineNumber: pendingRuleLine > 0 ? pendingRuleLine : i + 1, // Approximate
+          lineNumber: ruleStartLine,
           referencedRules: this.extractReferencedRules(ruleContent),
           mode: isLexerRule ? currentMode : undefined,  // Track mode for lexer rules
         };
@@ -320,6 +316,72 @@ export class AntlrAnalyzer {
     result.issues = this.validateGrammar(result);
 
     return result;
+  }
+
+  /**
+   * Extract rules referenced within a rule definition
+   */
+  private static stripCommentsFromLine(
+    line: string,
+    inBlockComment: boolean
+  ): { line: string; inBlockComment: boolean } {
+    let result = '';
+    let i = 0;
+    let inBlock = inBlockComment;
+    let inSingleQuote = false;
+    let inDoubleQuote = false;
+
+    while (i < line.length) {
+      if (inBlock) {
+        const endIdx = line.indexOf('*/', i);
+        if (endIdx === -1) {
+          return { line: result, inBlockComment: true };
+        }
+        inBlock = false;
+        i = endIdx + 2;
+        continue;
+      }
+
+      const char = line[i];
+      const nextChar = i + 1 < line.length ? line[i + 1] : '';
+
+      // Preserve escaped characters inside quoted strings.
+      if ((inSingleQuote || inDoubleQuote) && char === '\\' && i + 1 < line.length) {
+        result += char + line[i + 1];
+        i += 2;
+        continue;
+      }
+
+      if (!inDoubleQuote && char === "'") {
+        inSingleQuote = !inSingleQuote;
+        result += char;
+        i++;
+        continue;
+      }
+
+      if (!inSingleQuote && char === '"') {
+        inDoubleQuote = !inDoubleQuote;
+        result += char;
+        i++;
+        continue;
+      }
+
+      // Only treat comment markers as comments when outside quoted strings.
+      if (!inSingleQuote && !inDoubleQuote && char === '/' && nextChar === '*') {
+        inBlock = true;
+        i += 2;
+        continue;
+      }
+
+      if (!inSingleQuote && !inDoubleQuote && char === '/' && nextChar === '/') {
+        break;
+      }
+
+      result += char;
+      i++;
+    }
+
+    return { line: result, inBlockComment: inBlock };
   }
 
   /**
@@ -398,6 +460,7 @@ export class AntlrAnalyzer {
     // Check for undefined rule references
     const definedRules = new Set(grammar.rules.map((r) => r.name));
     const referenced = new Set<string>();
+    const entryParserRule = grammar.rules.find((r) => r.type === 'parser')?.name;
 
     for (const rule of grammar.rules) {
       for (const ref of rule.referencedRules) {
@@ -415,7 +478,7 @@ export class AntlrAnalyzer {
 
     // Check for unused rules
     for (const rule of grammar.rules) {
-      let isUsed = false;
+      let isUsed = rule.name === entryParserRule;
       // Check if used by other rules
       for (const other of grammar.rules) {
         if (other.name !== rule.name && other.referencedRules.includes(rule.name)) {
@@ -1095,12 +1158,20 @@ export class AntlrAnalyzer {
     }
 
     // Fallback: search for just the rule name (for cases where colon is on next line)
+    // But we must verify the next line has a colon to avoid matching rule references
     if (startLine === -1) {
       const namePattern = new RegExp(`^\\s*(?:fragment\\s+)?${ruleName}\\s*$`);
       for (let i = 0; i < lines.length; i++) {
         if (namePattern.test(lines[i])) {
-          startLine = i;
-          break;
+          // Verify this is a rule definition, not a reference
+          // Check if the next line starts with a colon (new-line colon style)
+          if (i + 1 < lines.length) {
+            const nextLine = lines[i + 1];
+            if (/^\s*:/.test(nextLine)) {
+              startLine = i;
+              break;
+            }
+          }
         }
       }
     }
@@ -1113,12 +1184,52 @@ export class AntlrAnalyzer {
       };
     }
 
-    // Find the end of the rule (marked by ;)
-    let endLine = startLine;
+    // Find the end of the rule by tracking parentheses balance
+    // This handles multi-line rules properly
+    let endLine = -1;  // Start at -1, not startLine
+    let parenDepth = 0;
+    let foundColon = false;
+
     for (let i = startLine; i < lines.length; i++) {
-      if (lines[i].includes(';')) {
-        endLine = i;
-        break;
+      const line = lines[i];
+
+      // Track parentheses depth (skip content inside strings)
+      for (let j = 0; j < line.length; j++) {
+        const char = line[j];
+
+        // Skip string literals
+        if (char === "'" || char === '"') {
+          const quote = char;
+          j++;
+          while (j < line.length && line[j] !== quote) {
+            if (line[j] === '\\' && j + 1 < line.length) j++; // Skip escaped chars
+            j++;
+          }
+          continue;
+        }
+
+        // Track parentheses
+        if (char === '(') parenDepth++;
+        else if (char === ')') parenDepth--;
+        else if (char === ':' && parenDepth === 0) foundColon = true;
+        else if (char === ';' && parenDepth === 0 && foundColon) {
+          endLine = i;
+          break;
+        }
+      }
+
+      if (endLine !== -1) break;  // Found the semicolon
+    }
+
+    // Fallback: if we couldn't find the end, use the original rule's line count
+    if (endLine === -1) {
+      const rule = analysis.rules.find((r) => r.name === ruleName);
+      if (rule) {
+        // Count lines in the original definition
+        const defLines = rule.definition.split('\n').length;
+        endLine = startLine + defLines - 1;
+      } else {
+        endLine = startLine;
       }
     }
 
@@ -1208,8 +1319,9 @@ export class AntlrAnalyzer {
       }
     }
 
-    // Replace the rule
-    lines.splice(startLine, endLine - startLine + 1, newRule);
+    // Replace the rule - split by newlines to maintain proper line array
+    const newRuleLines = newRule.split('\n');
+    lines.splice(startLine, endLine - startLine + 1, ...newRuleLines);
 
     const modified = lines.join('\n');
 
@@ -7088,6 +7200,309 @@ export class AntlrAnalyzer {
       modified: options.dryRun ? grammarContent : modified,
       changes,
       message,
+    };
+  }
+
+  /**
+   * Generate stress test inputs for grammar performance testing
+   */
+  static generateStressTest(
+    grammarContent: string,
+    strategy: 'nested' | 'wide' | 'repetition' | 'mixed' = 'mixed',
+    options: {
+      depth?: number;
+      count?: number;
+      repetitions?: number;
+    } = {}
+  ): {
+    input: string;
+    depth?: number;
+    width?: number;
+    size: number;
+    warnings: string[];
+  } {
+    const depth = options.depth || 50;
+    const count = options.count || 100;
+    const repetitions = options.repetitions || 100;
+    const warnings: string[] = [];
+
+    const analysis = this.analyze(grammarContent);
+    const parserRules = analysis.rules.filter(r => r.type === 'parser');
+    const lexerRules = analysis.rules.filter(r => r.type === 'lexer' && !r.name.startsWith('fragment'));
+
+    // Find simple token patterns
+    const simpleTokens = lexerRules
+      .filter(r => r.definition.match(/^'[^']+'$/) || r.definition.match(/^\[[^\]]+\]$/))
+      .slice(0, 10);
+
+    if (simpleTokens.length === 0) {
+      simpleTokens.push({ name: 'A', definition: "'a'", type: 'lexer', lineNumber: 0, referencedRules: [] });
+      warnings.push('No simple tokens found, using placeholder');
+    }
+
+    let input = '';
+    let actualDepth = 0;
+    let actualWidth = 0;
+
+    if (strategy === 'nested' || strategy === 'mixed') {
+      // Generate nested parentheses/brackets structure
+      const openToken = simpleTokens.find(t => t.definition.match(/^'\('.*$/))?.definition || "'('";
+      const closeToken = simpleTokens.find(t => t.definition.match(/^'\)'.*$/))?.definition || "')'";
+      const innerToken = simpleTokens.find(t => !t.definition.match(/^['(\[].*/))?.definition || "'x'";
+
+      const nestingDepth = strategy === 'mixed' ? Math.floor(depth / 2) : depth;
+      actualDepth = nestingDepth;
+
+      input = openToken.replace(/'/g, '').repeat(nestingDepth);
+      input += innerToken.replace(/'/g, '');
+      input += closeToken.replace(/'/g, '').repeat(nestingDepth);
+    }
+
+    if (strategy === 'wide' || strategy === 'mixed') {
+      // Generate many alternatives separated by a delimiter
+      const delimiter = simpleTokens.find(t => t.definition.match(/^','.*/))?.definition || "','";
+      const item = simpleTokens.find(t => !t.definition.match(/^['(\[].*/))?.definition || "'x'";
+
+      const itemCount = strategy === 'mixed' ? Math.floor(count / 2) : count;
+      actualWidth = itemCount;
+
+      const items: string[] = [];
+      for (let i = 0; i < itemCount; i++) {
+        items.push(item.replace(/'/g, ''));
+      }
+
+      if (strategy === 'mixed' && input) {
+        input += delimiter.replace(/'/g, '');
+      }
+      input += items.join(delimiter.replace(/'/g, ''));
+    }
+
+    if (strategy === 'repetition' || strategy === 'mixed') {
+      // Generate repeated sequences
+      const token = simpleTokens[0]?.definition.replace(/'/g, '') || 'x';
+
+      const items: string[] = [];
+      const repeatCount = strategy === 'mixed' ? Math.floor(repetitions / 2) : repetitions;
+      for (let i = 0; i < repeatCount; i++) {
+        items.push(token);
+      }
+
+      if (strategy === 'mixed' && input) {
+        input += ' ';
+      }
+      input += items.join(' ');
+    }
+
+    return {
+      input,
+      depth: actualDepth || undefined,
+      width: actualWidth || undefined,
+      size: Buffer.byteLength(input, 'utf8'),
+      warnings
+    };
+  }
+
+  /**
+   * Compare two parsing profiles to measure optimization impact
+   */
+  static compareProfiles(
+    profile1: {
+      parseTimeMs?: number;
+      tokenCount?: number;
+      treeDepth?: number;
+      decisionCount?: number;
+      ambiguityCount?: number;
+      contextSensitivityCount?: number;
+    },
+    profile2: {
+      parseTimeMs?: number;
+      tokenCount?: number;
+      treeDepth?: number;
+      decisionCount?: number;
+      ambiguityCount?: number;
+      contextSensitivityCount?: number;
+    }
+  ): {
+    metrics: Array<{
+      name: string;
+      before: number | string;
+      after: number | string;
+      changePercent: number;
+      improved: boolean;
+      degraded: boolean;
+    }>;
+    verdict: string;
+    summary: string;
+  } {
+    const metrics: Array<{
+      name: string;
+      before: number | string;
+      after: number | string;
+      changePercent: number;
+      improved: boolean;
+      degraded: boolean;
+    }> = [];
+
+    const addMetric = (
+      name: string,
+      before: number | undefined,
+      after: number | undefined,
+      lowerIsBetter: boolean = true
+    ) => {
+      const beforeVal = before ?? 'N/A';
+      const afterVal = after ?? 'N/A';
+
+      let changePercent = 0;
+      let improved = false;
+      let degraded = false;
+
+      if (typeof beforeVal === 'number' && typeof afterVal === 'number' && beforeVal !== 0) {
+        changePercent = Math.round(((afterVal - beforeVal) / beforeVal) * 100);
+        if (lowerIsBetter) {
+          improved = changePercent < 0;
+          degraded = changePercent > 0;
+        } else {
+          improved = changePercent > 0;
+          degraded = changePercent < 0;
+        }
+      }
+
+      metrics.push({
+        name,
+        before: beforeVal,
+        after: afterVal,
+        changePercent,
+        improved,
+        degraded
+      });
+    };
+
+    addMetric('Parse Time (ms)', profile1.parseTimeMs, profile2.parseTimeMs, true);
+    addMetric('Token Count', profile1.tokenCount, profile2.tokenCount, false);
+    addMetric('Tree Depth', profile1.treeDepth, profile2.treeDepth, true);
+    addMetric('Decisions', profile1.decisionCount, profile2.decisionCount, true);
+    addMetric('Ambiguities', profile1.ambiguityCount, profile2.ambiguityCount, true);
+    addMetric('Context Sensitivity', profile1.contextSensitivityCount, profile2.contextSensitivityCount, true);
+
+    // Determine verdict
+    const improvedCount = metrics.filter(m => m.improved).length;
+    const degradedCount = metrics.filter(m => m.degraded).length;
+
+    let verdict = '';
+    let summary = '';
+
+    if (improvedCount > degradedCount + 2) {
+      verdict = '✅ Significantly Improved';
+      summary = `Optimization successful: ${improvedCount} metrics improved, ${degradedCount} degraded`;
+    } else if (improvedCount > degradedCount) {
+      verdict = '✅ Improved';
+      summary = `Optimization had positive impact: ${improvedCount} metrics improved`;
+    } else if (degradedCount > improvedCount + 2) {
+      verdict = '❌ Significantly Degraded';
+      summary = `Optimization had negative impact: ${degradedCount} metrics degraded`;
+    } else if (degradedCount > improvedCount) {
+      verdict = '❌ Degraded';
+      summary = `Optimization had some negative impact: ${degradedCount} metrics degraded`;
+    } else {
+      verdict = '➖ Unchanged';
+      summary = 'No significant change in performance metrics';
+    }
+
+    return { metrics, verdict, summary };
+  }
+
+  /**
+   * Compare two grammars to identify differences
+   */
+  static compareGrammars(
+    grammar1: string,
+    grammar2: string
+  ): {
+    summary: string;
+    grammar1: {
+      parserRules: number;
+      lexerRules: number;
+      totalRules: number;
+    };
+    grammar2: {
+      parserRules: number;
+      lexerRules: number;
+      totalRules: number;
+    };
+    differences: {
+      added: string[];
+      removed: string[];
+      modified: string[];
+    };
+  } {
+    const analysis1 = this.analyze(grammar1);
+    const analysis2 = this.analyze(grammar2);
+
+    const rules1 = new Map(analysis1.rules.map(r => [r.name, r.definition]));
+    const rules2 = new Map(analysis2.rules.map(r => [r.name, r.definition]));
+
+    const added: string[] = [];
+    const removed: string[] = [];
+    const modified: string[] = [];
+
+    // Find added and modified rules
+    for (const [name, def] of rules2) {
+      if (!rules1.has(name)) {
+        added.push(name);
+      } else if (rules1.get(name) !== def) {
+        modified.push(name);
+      }
+    }
+
+    // Find removed rules
+    for (const name of rules1.keys()) {
+      if (!rules2.has(name)) {
+        removed.push(name);
+      }
+    }
+
+    const parserRules1 = analysis1.rules.filter(r => r.type === 'parser').length;
+    const lexerRules1 = analysis1.rules.filter(r => r.type === 'lexer').length;
+    const parserRules2 = analysis2.rules.filter(r => r.type === 'parser').length;
+    const lexerRules2 = analysis2.rules.filter(r => r.type === 'lexer').length;
+
+    const totalDiff = (parserRules2 + lexerRules2) - (parserRules1 + lexerRules1);
+    let summary = '';
+
+    if (added.length === 0 && removed.length === 0 && modified.length === 0) {
+      summary = 'Grammars are identical';
+    } else {
+      const parts: string[] = [];
+      if (added.length > 0) parts.push(`${added.length} added`);
+      if (removed.length > 0) parts.push(`${removed.length} removed`);
+      if (modified.length > 0) parts.push(`${modified.length} modified`);
+
+      summary = `Grammar comparison: ${parts.join(', ')}`;
+
+      if (totalDiff > 0) {
+        summary += ` (net +${totalDiff} rules)`;
+      } else if (totalDiff < 0) {
+        summary += ` (net ${totalDiff} rules)`;
+      }
+    }
+
+    return {
+      summary,
+      grammar1: {
+        parserRules: parserRules1,
+        lexerRules: lexerRules1,
+        totalRules: parserRules1 + lexerRules1
+      },
+      grammar2: {
+        parserRules: parserRules2,
+        lexerRules: lexerRules2,
+        totalRules: parserRules2 + lexerRules2
+      },
+      differences: {
+        added,
+        removed,
+        modified
+      }
     };
   }
 }

@@ -32,6 +32,7 @@ run_test "Diff Output Mode" "test-diff-output.cjs"
 run_test "Multi-File Rename" "multi-file-rename/test-multifile-rename.cjs"
 run_test "Lexer Modes" "test-lexer-modes.cjs"
 run_test "Analysis Tools" "test-analysis-tools.cjs"
+run_test "Regression Fixes" "test-regression-fixes.cjs"
 run_test "Bottleneck Analysis" "test-bottlenecks.cjs"
 run_test "Benchmark Tools" "test-native-benchmark.cjs"
 
